@@ -1,16 +1,16 @@
 module.exports = {
   // Path to Any Chromium based Binary, Tested with Chrome, Chromium and Helium
-  browser: '/Applications/Helium.app/Contents/MacOS/Helium',
+  browser: "/Applications/Helium.app/Contents/MacOS/Helium",
 
   // Where to store the browser profile (bookmarks, cookies, extensions state)
   // ~ expands to home directory
-  profile: '~/.human-browser/profile',
+  profile: "~/.human-browser/profile",
 
   // WebSocket port — must match extension/service-worker.js WS_URL
   port: 7331,
 
   // URL to open on launch
-  startUrl: 'https://hugopalma.work',
+  startUrl: "https://hugopalma.work",
 
   // Browser window size
   viewport: { width: 1920, height: 1080 },
@@ -22,7 +22,7 @@ module.exports = {
   connectionTimeout: 120000,
 
   // Logging: 'silent' | 'error' | 'info' | 'debug'
-  logLevel: 'info',
+  logLevel: "info",
 
   // Framework runtime tuning pushed into the extension/content script
   framework: {
@@ -42,31 +42,31 @@ module.exports = {
   human: {
     // Global avoid rules — elements matching these are never interacted with
     avoid: {
-      selectors: [],       // CSS selectors: ['.cookie-banner', '.ad-overlay']
-      classes: [],          // Class names: ['honeypot', 'trap', 'sponsored']
-      ids: [],              // Element IDs: ['popup-cta']
-      attributes: {},       // Attribute checks: { 'data-ad': '*', 'data-honeypot': '*' }
+      selectors: [], // CSS selectors: ['.cookie-banner', '.ad-overlay']
+      classes: [], // Class names: ['honeypot', 'trap', 'sponsored']
+      ids: [], // Element IDs: ['popup-cta']
+      attributes: {}, // Attribute checks: { 'data-ad': '*', 'data-honeypot': '*' }
     },
 
     click: {
-      thinkDelayMin: 200,   // ms pause after cursor arrives, before clicking
+      thinkDelayMin: 200, // ms pause after cursor arrives, before clicking
       thinkDelayMax: 500,
-      maxShiftPx: 50,       // abort click if element moves more than this during think time
+      maxShiftPx: 50, // abort click if element moves more than this during think time
     },
 
     type: {
-      baseDelayMin: 100,    // ms per character
+      baseDelayMin: 100, // ms per character
       baseDelayMax: 250,
-      variance: 30,         // +/- ms jitter per character
-      pauseChance: 0.15,    // probability of a thinking pause between characters
-      pauseMin: 300,        // thinking pause range
-      pauseMax: 800,
+      variance: 30, // +/- ms jitter per character
+      pauseChance: 0.15, // probability of a thinking pause between characters
+      pauseMin: 200, // thinking pause range
+      pauseMax: 400,
     },
 
     scroll: {
-      amountMin: 200,       // px per scroll action
+      amountMin: 200, // px per scroll action
       amountMax: 500,
-      backScrollChance: 0.2,  // probability of a small scroll-back for realism
+      backScrollChance: 0.1, // probability of a small scroll-back for realism
       backScrollMin: 10,
       backScrollMax: 50,
     },

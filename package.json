@@ -1,6 +1,6 @@
 {
   "name": "human-browser",
-  "version": "0.1.0",
+  "version": "1.0.10",
   "description": "CDP-free browser automation with human-like behavior via Chrome extension + WebSocket",
   "main": "index.js",
   "scripts": {
@@ -16,7 +16,8 @@
     "anti-detection",
     "cdp-free"
   ],
-  "author": "",
+  "author": "Hugo Palma",
+  "homepage": "https://github.com/hugopalma17/human-browser",
   "license": "ISC",
   "type": "commonjs",
   "engines": {
