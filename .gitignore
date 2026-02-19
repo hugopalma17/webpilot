@@ -1,0 +1,45 @@
+# Ignore everything by default
+*
+
+# Framework core
+!.gitignore
+!index.js
+!package.json
+!package-lock.json
+!human-browser.config.js
+
+
+
+# Server + launcher
+!lib/
+!lib/server.js
+!lib/launcher.js
+
+# Node.js client library
+!client/
+!client/index.js
+!client/page.js
+!client/element.js
+!client/keyboard.js
+!client/cursor.js
+
+# Chrome extension
+!extension/
+!extension/manifest.json
+!extension/service-worker.js
+!extension/content-script.js
+!extension/icons/
+!extension/icons/icon-16.png
+!extension/icons/icon-48.png
+!extension/icons/icon-128.png
+
+# Protocol documentation
+!protocol/
+!protocol/PROTOCOL.md
+!README.md
+!SKILLS.md 
+
+# Tests
+!test/*
+!test/**
+

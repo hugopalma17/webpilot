@@ -1,0 +1,28 @@
+{
+  "name": "human-browser",
+  "version": "0.1.0",
+  "description": "CDP-free browser automation with human-like behavior via Chrome extension + WebSocket",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node test/integration.js"
+  },
+  "keywords": [
+    "browser",
+    "automation",
+    "human",
+    "websocket",
+    "chrome-extension",
+    "anti-detection",
+    "cdp-free"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "ws": "^8.19.0"
+  }
+}
