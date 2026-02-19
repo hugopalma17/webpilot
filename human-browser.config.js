@@ -1,6 +1,6 @@
 module.exports = {
   // Path to Any Chromium based Binary, Tested with Chrome, Chromium and Helium
-  browser: "/Applications/Helium.app/Contents/MacOS/Helium",
+  browser: "/Applications/Chromium.app/Contents/MacOS/Chromium",
 
   // Where to store the browser profile (bookmarks, cookies, extensions state)
   // ~ expands to home directory
