@@ -1,6 +1,9 @@
-# SKILLS.md
+---
+name: human-browser
+description: Use this skill when an LLM/subagent needs to navigate websites and interact with pages through the Human Browser WebSocket framework instead of Puppeteer/Playwright/CDP.
+---
 
-## Human Browser Subagent Skill
+# Human Browser Subagent Skill
 
 Use this skill when an LLM/subagent needs to navigate websites and interact with pages through the Human Browser WebSocket framework instead of Puppeteer/Playwright/CDP.
 
@@ -114,8 +117,93 @@ Apply this skill when the task includes any of:
 - Report final URL and extraction results.
 - Report retries/fallbacks used.
 
+## CSP (Content Security Policy) Guidance
+
+### Understanding CSP in This Framework
+
+The Human Browser runs in a Chrome extension with two JavaScript execution contexts:
+
+**ISOLATED World** (Content Script) - Always available, CSP-safe:
+- Full DOM access (`querySelector`, `getHTML`, etc.)
+- Human interactions (`human.click`, `human.type`, `human.scroll`)
+- Safe for ALL websites regardless of CSP
+
+**MAIN World** (Page Context) - CSP-restricted:
+- Access to page globals (`window.__INITIAL_STATE__`)
+- May fail on sites with strict CSP (`script-src 'self'`)
+- Automatically falls back to ISOLATED on failure
+
+### CSP-Safe Operations (Always Work)
+
+These commands work on **all sites**, including CSP-strict ones:
+
+| Command | Use Case |
+|---------|----------|
+| `dom.getHTML` | Get full page HTML |
+| `dom.querySelector` / `dom.querySelectorAll` | Find elements |
+| `dom.discoverElements` | List all interactive elements |
+| `human.click` | Click elements safely |
+| `human.type` | Type text human-like |
+| `human.scroll` | Scroll pages/panels |
+| `page.content()` | Get page HTML (uses `dom.getHTML`) |
+
+### When CSP Errors Appear
+
+**CSP errors in the DevTools console are harmless and expected.**
+
+Sites with strict CSP will show errors like:
+```
+EvalError: Evaluating a string as JavaScript violates CSP
+```
+
+**This is NOT a problem:**
+- Sites cannot detect these client-side errors
+- Fallback mechanisms activate automatically
+- Normal browsers also show these errors on CSP sites
+- No server-side detection possible
+
+### Anti-Detection Advantage
+
+Unlike Puppeteer/Playwright (CDP-based), this extension:
+
+| Detection Method | CDP | Extension |
+|------------------|-----|-----------|
+| Remote debugging port | Exposed (9222) | None |
+| `navigator.webdriver` | `true` | Undefined |
+| Chrome APIs | Missing | Present |
+| CSP console errors | Visible | Same as normal browsing |
+
+### Best Practices
+
+1. **Prefer ISOLATED world** - Use `dom.getHTML`, `querySelector`, `human.*` for most operations
+2. **Extract from rendered DOM** - After clicking/scrolling, read the HTML that was rendered
+3. **Use data attributes** - Sites often store data in `data-*` attributes (stable across redesigns)
+4. **Ignore CSP errors** - They're invisible to server-side detection
+5. **Use MAIN world only when needed** - Only for accessing page JavaScript globals
+
+### Example: CSP-Safe Data Extraction
+
+```javascript
+// [YES] CSP-safe: Extract from rendered DOM
+const jobs = await page.evaluate(() => {
+  const cards = document.querySelectorAll('[data-view-name="job-card"]');
+  return Array.from(cards).map(card => ({
+    title: card.querySelector('h3')?.textContent,
+    company: card.querySelector('.company')?.textContent,
+    // Read from data attributes (very stable)
+    jobId: card.getAttribute('data-job-id')
+  }));
+});
+
+// [WARN] CSP-restricted: Access page globals (may fail on strict CSP)
+const state = await page.evaluate(() => {
+  return window.__INITIAL_STATE__; // Requires MAIN world
+});
+```
+
 ## Do Not
 
 - Do not depend on Puppeteer/Playwright/CDP APIs.
 - Do not bypass human safety checks by default.
 - Do not assume one selector works across all pages without fallback.
+- Do not worry about CSP console errors - they are harmless to detection.

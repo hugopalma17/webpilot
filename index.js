@@ -131,11 +131,13 @@ async function connectToServer(overrides = {}) {
 
     ws.on('open', async () => {
       const transport = {
-        send(action, params = {}) {
+        send(action, params = {}, tabId = null) {
           return new Promise((res, rej) => {
             const id = idCounter++;
             pending.set(id, { resolve: res, reject: rej });
-            ws.send(JSON.stringify({ id, action, params }));
+            const msg = { id, action, params };
+            if (tabId) msg.tabId = tabId;
+            ws.send(JSON.stringify(msg));
           });
         },
         on(event, fn) {

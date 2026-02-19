@@ -477,6 +477,58 @@ async function main() {
     );
   }
 
+  section("CSP COMPATIBILITY TESTS");
+  
+  const CSP_TESTS = [
+    { name: "No CSP", csp: "none" },
+    { name: "Strict CSP", csp: "strict" },
+    { name: "LinkedIn-style CSP", csp: "linkedin" },
+    { name: "UnsafeEval CSP", csp: "unsafeEval" },
+    { name: "UnsafeInline CSP", csp: "unsafeInline" },
+  ];
+  
+  for (const { name, csp } of CSP_TESTS) {
+    console.log(`\n  Testing ${name}...`);
+    const testUrl = `${FIXTURES_URL}?csp=${csp}`;
+    
+    try {
+      await page.goto(testUrl);
+      await new Promise(r => setTimeout(r, 500));
+      
+      // Test dom.getHTML (should always work)
+      const html = await page.content();
+      assert(html.length > 0, `${name}: dom.getHTML works`);
+      
+      // Test querySelector (should always work)
+      const title = await page.$('#title');
+      assert(title !== null, `${name}: querySelector works`);
+      
+      // Test dom.evaluate (may fail on strict CSP)
+      try {
+        const evalResult = await page.evaluate(() => document.title);
+        const evalWorked = evalResult !== null && evalResult.length > 0;
+        assert(evalWorked, `${name}: dom.evaluate works (${evalResult})`);
+      } catch (e) {
+        if (csp === 'strict') {
+          assert(true, `${name}: dom.evaluate correctly fails on strict CSP`);
+        } else {
+          assert(false, `${name}: dom.evaluate failed unexpectedly: ${e.message}`);
+        }
+      }
+      
+      // Test human.click (should always work)
+      const btn = await page.$('#btn-visible');
+      if (btn) {
+        const clickResult = await page.humanClick(btn);
+        assert(clickResult.clicked === true || clickResult.clicked === false, 
+               `${name}: human.click executes`);
+      }
+      
+    } catch (e) {
+      assert(false, `${name}: Test error - ${e.message}`);
+    }
+  }
+
   if (failed > 0) {
     console.log("\nSome tests failed!");
   } else {

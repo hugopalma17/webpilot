@@ -263,13 +263,27 @@ async function handleCommand(msg) {
       // Full page: scroll-capture-stitch (like GoFullPage/FireShot)
       return await captureFullPage(tabId, windowId);
     }
-    // Evaluate commands — try content script first (CSP-safe), fall back to MAIN world
+    // Evaluate commands — try MAIN world first (for page JS globals), fall back to ISOLATED
     case "dom.evaluate": {
+      // Try MAIN world first if not explicitly requesting ISOLATED
+      if (params.world !== "isolated") {
+        try {
+          return await executeInPage(tabId, params.fn, params.args || []);
+        } catch (mainErr) {
+          // MAIN world failed (likely CSP) — fall back to ISOLATED
+          console.log("[bridge] MAIN world evaluate failed, falling back to ISOLATED:", mainErr.message);
+        }
+      }
+      
+      // ISOLATED world fallback — CSP-safe but limited to DOM access
       try {
-        return await forwardToContentScript(tabId, "dom.evaluate", params);
-      } catch {
-        // Content script failed — fall back to MAIN world (for page JS globals)
-        return executeInPage(tabId, params.fn, params.args || []);
+        return await forwardToContentScript(tabId, "dom.evaluateIsolated", params);
+      } catch (isolatedErr) {
+        throw new Error(
+          `Evaluate failed in both MAIN and ISOLATED worlds. ` +
+          `MAIN error: ${mainErr?.message || "N/A"}. ` +
+          `ISOLATED error: ${isolatedErr.message}`
+        );
       }
     }
     case "dom.evaluateHandle": {

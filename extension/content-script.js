@@ -273,7 +273,7 @@ function moveCursorDot(x, y) {
 
 // Dispatch mouse move along path with variable timing (ease-in-out speed)
 function dispatchMousePath(points) {
-  if (debugMode) clearTrail();
+  clearTrail();
 
   return new Promise((resolve) => {
     let i = 0;
@@ -290,10 +290,7 @@ function dispatchMousePath(points) {
       cursorX = p.x;
       cursorY = p.y;
       moveCursorDot(p.x, p.y);
-
-      if (debugMode) {
-        drawTrailDot(p.x, p.y, progress);
-      }
+      drawTrailDot(p.x, p.y, progress);
 
       const target = document.elementFromPoint(p.x, p.y) || document.body;
       target.dispatchEvent(
@@ -412,11 +409,27 @@ async function actionMouseMoveTo(params) {
   const targetX = rect.x + padX + Math.random() * (rect.width - padX * 2);
   const targetY = rect.y + padY + Math.random() * (rect.height - padY * 2);
 
-  const dist = Math.hypot(targetX - cursorX, targetY - cursorY);
+  let startX = cursorX;
+  let startY = cursorY;
+
+  // If cursor is already on or very near the target, drift away first so
+  // the movement path is always visible (avoids teleport-click appearance).
+  const dist = Math.hypot(targetX - startX, targetY - startY);
+  if (dist < 80) {
+    const driftAngle = Math.random() * Math.PI * 2;
+    const driftDist = 80 + Math.random() * 120;
+    const driftX = Math.max(0, Math.min(window.innerWidth,  startX + Math.cos(driftAngle) * driftDist));
+    const driftY = Math.max(0, Math.min(window.innerHeight, startY + Math.sin(driftAngle) * driftDist));
+    await dispatchMousePath(generateBezierPath(startX, startY, driftX, driftY));
+    startX = cursorX;
+    startY = cursorY;
+  }
+
+  const dist2 = Math.hypot(targetX - startX, targetY - startY);
   const points =
-    dist > 200
-      ? generateOvershootPath(cursorX, cursorY, targetX, targetY)
-      : generateBezierPath(cursorX, cursorY, targetX, targetY);
+    dist2 > 200
+      ? generateOvershootPath(startX, startY, targetX, targetY)
+      : generateBezierPath(startX, startY, targetX, targetY);
 
   await dispatchMousePath(points);
   saveCursorPosition();
@@ -442,13 +455,17 @@ function actionClick(params) {
       button: 0,
       detail: i,
     };
-    el.dispatchEvent(new MouseEvent("mousedown", opts));
+    // Dispatch on the element physically under the cursor.
+    // If nothing is at the cursor coordinates, abort — element is not truly visible.
+    const atPoint = document.elementFromPoint(x, y);
+    if (!atPoint) return;
+    atPoint.dispatchEvent(new MouseEvent("mousedown", opts));
     if (i === 1) el.focus();
-    el.dispatchEvent(new MouseEvent("mouseup", opts));
-    el.dispatchEvent(new MouseEvent("click", opts));
+    atPoint.dispatchEvent(new MouseEvent("mouseup", opts));
+    atPoint.dispatchEvent(new MouseEvent("click", opts));
 
     // detail:2 = double-click (select word), detail:3 = triple-click (select all)
-    if (i === 2) el.dispatchEvent(new MouseEvent("dblclick", opts));
+    if (i === 2) atPoint.dispatchEvent(new MouseEvent("dblclick", opts));
   }
 
   // Triple-click: select all text in input/textarea
@@ -990,7 +1007,7 @@ async function ensureElementVisible(el, params) {
     );
     rect = el.getBoundingClientRect();
 
-    // If still off-screen, use multi-step humanScroll
+    // If still fully off-screen after scrollIntoView, use multi-step humanScroll
     if (rect.bottom < 0 || rect.top > vh || rect.right < 0 || rect.left > vw) {
       const maxSteps = 20;
       for (let step = 0; step < maxSteps; step++) {
@@ -1366,8 +1383,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           .catch((e) => sendResponse({ error: e.message }));
         return true; // async
       case "dom.click":
-        sendResponse({ result: actionClick(params) });
-        return;
+        actionHumanClick(params)
+          .then((r) => sendResponse({ result: r }))
+          .catch((e) => sendResponse({ error: e.message }));
+        return true; // async
       case "dom.type":
         sendResponse({ result: actionType(params) });
         return;
@@ -1394,6 +1413,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       case "dom.getProperty":
         sendResponse({ result: actionGetProperty(params) });
+        return;
+      case "dom.getHTML":
+        // CSP-safe HTML retrieval from ISOLATED world
+        sendResponse({
+          result: {
+            html: document.documentElement?.outerHTML || "",
+            title: document.title || "",
+            url: location?.href || ""
+          }
+        });
         return;
       case "dom.waitForSelector":
         actionWaitForSelector(params, sendResponse);
@@ -1588,6 +1617,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           else sendResponse({ result: res.result });
         });
         return true; // async
+      }
+      case "dom.evaluateIsolated": {
+        // CSP-safe evaluation in ISOLATED world (content script context)
+        // Limited to DOM access, cannot access page JS globals
+        try {
+          const fn = new Function("return (" + params.fn + ")")();
+          const result = fn.apply(null, params.args || []);
+          sendResponse({ result });
+        } catch (e) {
+          sendResponse({ error: e.message });
+        }
+        return;
       }
       case "dom.discoverElements": {
         // CSP-safe element discovery — no eval needed

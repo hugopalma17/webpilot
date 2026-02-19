@@ -94,7 +94,9 @@ You can also update/read it explicitly with `framework.setConfig` and `framework
 | `cookies.getAll` | `{ url? }` | `[{ name, value, domain, ... }]` |
 | `cookies.set` | `{ cookie: { name, value, domain?, path?, secure?, httpOnly?, sameSite?, expires? } }` | `{ success: true }` |
 
-## Actions: DOM (Raw)
+## Actions: DOM
+
+> **Note:** `dom.click` runs the full human pipeline (honeypot detection, bezier cursor movement, scroll into view, think-time delay). It is equivalent to `human.click`. All other `dom.*` commands are raw and direct.
 
 | Action | Params | Returns |
 |--------|--------|---------|
@@ -104,7 +106,7 @@ You can also update/read it explicitly with `framework.setConfig` and `framework
 | `dom.querySelectorAllWithin` | `{ parentHandleId, selector }` | `[handleId, ...]` |
 | `dom.waitForSelector` | `{ selector, timeout? }` | `handleId` or `null` |
 | `dom.boundingBox` | `{ handleId \| selector }` | `{ x, y, width, height }` or `null` |
-| `dom.click` | `{ handleId \| selector, clickCount? }` | `{ clicked: true }` |
+| `dom.click` | `{ handleId \| selector, clickCount?, avoid? }` | `{ clicked: true }` or `{ clicked: false, reason }` |
 | `dom.mouseMoveTo` | `{ handleId \| selector }` | `{ x, y }` |
 | `dom.focus` | `{ handleId \| selector }` | `{ focused: true }` |
 | `dom.type` | `{ text, handleId?, selector? }` | `{ typed: true }` |
@@ -159,11 +161,13 @@ Human commands include built-in safety checks (honeypot detection, bezier cursor
 6. Visibility hidden → `reason: "visibility-hidden"`
 7. Sub-pixel size (< 5px) → `reason: "sub-pixel"`
 8. No bounding box → `reason: "no-bounding-box"`
-9. Bezier mouse movement to element
-10. Random think-time delay (200-500ms default)
-11. Element disappeared during delay → `reason: "element-disappeared"`
-12. Element shifted > 50px during delay → `reason: "element-shifted"`
-13. mousedown → mouseup → click dispatch
+9. Scroll element into comfortable view (`scrollIntoView` + fallback human scroll steps)
+10. If cursor is within 80px of target, drift to a random nearby point first (avoids teleport-click appearance)
+11. Bezier mouse movement to element (overshoot path if dist > 200px)
+12. Random think-time delay (200-500ms default)
+13. Element disappeared during delay → `reason: "element-disappeared"`
+14. Element shifted > 50px during delay → `reason: "element-shifted"`
+15. Dispatch `mousedown → mouseup → click` on `document.elementFromPoint(cursorX, cursorY)` — if nothing is at cursor coordinates, click aborts
 
 ### human.type
 
@@ -263,6 +267,133 @@ Fired when a tab's URL changes (navigation, pushState, replaceState).
 ```
 
 ---
+
+## Content Security Policy (CSP)
+
+### Overview
+
+The Human Browser operates within a Chrome extension using two JavaScript execution contexts:
+
+1. **ISOLATED World** (Content Script Context) - CSP-safe, full DOM access
+2. **MAIN World** (Page Context) - Requires `unsafe-eval` or `unsafe-inline`, access to page globals
+
+### CSP-Resistant Operations (Always Work)
+
+These commands run in ISOLATED world and are **immune to CSP restrictions**:
+
+| Action | Context | CSP Affected? |
+|--------|---------|---------------|
+| `dom.querySelector` | ISOLATED | [NO] No |
+| `dom.querySelectorAll` | ISOLATED | [NO] No |
+| `dom.getHTML` | ISOLATED | [NO] No |
+| `human.click` | ISOLATED | [NO] No |
+| `human.type` | ISOLATED | [NO] No |
+| `human.scroll` | ISOLATED | [NO] No |
+| `dom.click` | ISOLATED | [NO] No |
+| `dom.scroll` | ISOLATED | [NO] No |
+| `tabs.*` | Extension | [NO] No |
+
+### CSP-Sensitive Operations
+
+These commands attempt MAIN world execution first, then fall back to ISOLATED:
+
+| Action | Strategy | CSP Fallback |
+|--------|----------|--------------|
+| `dom.evaluate` | Try MAIN → ISOLATED fallback | Falls back to ISOLATED (limited to DOM) |
+| `dom.elementEvaluate` | Try MAIN → ISOLATED fallback | Falls back to ISOLATED |
+| `page.content()` | Uses `dom.getHTML` | [YES] CSP-safe |
+
+### Understanding CSP Errors
+
+**CSP errors in DevTools console are harmless and expected on sites with strict CSP.**
+
+Sites with CSP headers like:
+```
+Content-Security-Policy: script-src 'self'
+```
+
+Will block MAIN world script execution, resulting in console errors like:
+```
+EvalError: Evaluating a string as JavaScript violates CSP directive
+```
+
+**This is NOT a problem because:**
+
+1. **Sites cannot detect client-side CSP errors** - they have no access to your DevTools console
+2. **Fallback mechanisms activate automatically** - ISOLATED world operations continue working
+3. **Normal browsers also trigger CSP errors** on these sites - it's indistinguishable from regular browsing
+4. **No server-side detection** - the errors never leave your local browser
+
+### Anti-Detection Architecture
+
+Unlike CDP-based automation (Puppeteer/Playwright), this extension approach:
+
+| Detection Method | CDP/Puppeteer | Extension |
+|------------------|---------------|-----------|
+| Remote debugging port | [YES] Exposed (9222) | [NO] None |
+| `navigator.webdriver` | [YES] `true` | [NO] Undefined |
+| `window.chrome.runtime` | [YES] Missing | [NO] Present |
+| Network signatures | [YES] CDP patterns | [NO] Normal WS |
+| CSP console errors | [NO] Visible | [NO] Same as normal browsing |
+
+**The extension is architecturally stealth because:**
+- No open debugging ports
+- Native Chrome execution context
+- WebSocket traffic looks like normal site activity
+- CSP errors are indistinguishable from regular browsing
+
+### When to Use MAIN World
+
+Only use MAIN world (via `dom.evaluate`) when you need:
+
+- Access to page JavaScript globals (`window.__INITIAL_STATE__`)
+- Calling page-defined functions
+- Reading variables from the page's JS scope
+
+**Example - Extracting from rendered HTML (CSP-safe):**
+```javascript
+// This works on ALL sites regardless of CSP
+const html = await page.content(); // Uses dom.getHTML (ISOLATED)
+const elements = await page.discoverElements(); // ISOLATED
+const jobData = await page.evaluate(() => {
+  // Tries MAIN first, falls back to ISOLATED
+  return document.querySelector('.job')?.textContent;
+});
+```
+
+**Example - Requiring page globals (CSP-restricted):**
+```javascript
+// This may fail on CSP-strict sites
+const state = await page.evaluate(() => {
+  return window.__INITIAL_STATE__; // Requires MAIN world
+});
+// On CSP-strict sites, returns null or throws
+```
+
+### Testing CSP Compatibility
+
+The test server includes CSP test endpoints:
+
+```bash
+# Start test server
+node test/server.js
+
+# Test different CSP configurations:
+curl http://localhost:3456/?csp=strict      # Blocks all inline/eval
+curl http://localhost:3456/?csp=linkedin    # Allows unsafe-inline
+curl http://localhost:3456/?csp=none        # No CSP
+
+# Run CSP compatibility tests
+node test/all-commands.js
+```
+
+### Best Practices
+
+1. **Prefer ISOLATED world operations** - Use `dom.getHTML`, `querySelector`, `human.*` commands
+2. **Extract from rendered DOM** - After scrolling triggers lazy loading, scrape the HTML
+3. **Use data attributes** - Sites often store data in `data-*` attributes (e.g., `data-view-tracking-scope`)
+4. **Avoid MAIN world unless necessary** - Only for accessing page globals
+5. **Don't worry about CSP console errors** - They're invisible to server-side detection
 
 ## Example: Python Client
 

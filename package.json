@@ -1,6 +1,6 @@
 {
   "name": "human-browser",
-  "version": "1.0.10",
+  "version": "1.0.15",
   "description": "CDP-free browser automation with human-like behavior via Chrome extension + WebSocket",
   "main": "index.js",
   "scripts": {

@@ -61,7 +61,9 @@ class BridgePage {
   }
 
   async content() {
-    return this.evaluate(() => document.documentElement.outerHTML);
+    // Use CSP-safe dom.getHTML instead of evaluate
+    const result = await this._send("dom.getHTML");
+    return result?.html || "";
   }
 
   // Discover all interactive elements on the page (CSP-safe, no evaluate needed)

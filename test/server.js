@@ -28,11 +28,26 @@ const { startWithPage, killBrowserAndExit } = require("../index");
 const HTTP_PORT = 3456;
 const testDir = path.dirname(__filename);
 
+// CSP configurations for testing
+const CSP_CONFIGS = {
+  none: null, // No CSP headers
+  strict: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'", // Strict - blocks inline scripts and eval
+  linkedin: "script-src 'self' https://linkedin.com https://static.licdn.com 'unsafe-inline'; style-src 'self' 'unsafe-inline'", // LinkedIn-style - allows unsafe-inline
+  unsafeEval: "script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'", // Allows eval but not inline
+  unsafeInline: "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'", // Allows inline but not eval
+};
+
 // Simple static file server for test fixtures
 const httpServer = http.createServer((req, res) => {
+  const url = new URL(req.url, `http://localhost:${HTTP_PORT}`);
+  
+  // Check for CSP test parameter: ?csp=strict, ?csp=linkedin, etc.
+  const cspMode = url.searchParams.get("csp") || "none";
+  const cspHeader = CSP_CONFIGS[cspMode] || CSP_CONFIGS.none;
+  
   const filePath = path.join(
     testDir,
-    req.url === "/" ? "fixtures.html" : req.url,
+    url.pathname === "/" ? "fixtures.html" : url.pathname,
   );
   const ext = path.extname(filePath);
   const types = {
@@ -47,7 +62,16 @@ const httpServer = http.createServer((req, res) => {
       res.end("Not found");
       return;
     }
-    res.writeHead(200, { "Content-Type": types[ext] || "text/plain" });
+    
+    const headers = { "Content-Type": types[ext] || "text/plain" };
+    
+    // Add CSP headers for HTML files
+    if (ext === ".html" && cspHeader) {
+      headers["Content-Security-Policy"] = cspHeader;
+      console.log(`[test] Serving ${url.pathname} with CSP: ${cspMode}`);
+    }
+    
+    res.writeHead(200, headers);
     res.end(data);
   });
 });
@@ -65,6 +89,12 @@ async function main() {
   console.log(
     `[test] Browser ready. Run tests with: node test/all-commands.js`,
   );
+  console.log(`[test] CSP Test URLs:`);
+  console.log(`  - No CSP:     http://localhost:${HTTP_PORT}/`);
+  console.log(`  - Strict CSP: http://localhost:${HTTP_PORT}/?csp=strict`);
+  console.log(`  - LinkedIn:   http://localhost:${HTTP_PORT}/?csp=linkedin`);
+  console.log(`  - UnsafeEval: http://localhost:${HTTP_PORT}/?csp=unsafeEval`);
+  console.log(`  - UnsafeInline: http://localhost:${HTTP_PORT}/?csp=unsafeInline`);
   console.log(`[test] Press Ctrl+C to stop.\n`);
 
   process.on("SIGINT", () => {
