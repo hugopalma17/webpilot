@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>Test Page</title>
+  <style>
+    body {
+      font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      padding: 40px;
+      background-color: #f0f2f5;
+      color: #333;
+      line-height: 1.5;
+    }
+
+    #container {
+      background-color: #ffffff;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      margin-top: 0;
+      color: #1a1a1a;
+      font-weight: 700;
+    }
+
+    p.intro {
+      font-size: 1.1em;
+      color: #666;
+      margin-bottom: 25px;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      padding: 10px 15px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      background-color: #fff;
+      font-size: 14px;
+      margin: 5px;
+      vertical-align: middle;
+    }
+
+    button {
+      background-color: #f3f4f6;
+      font-weight: 500;
+      color: #374151;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background-color: #e5e7eb;
+    }
+
+    #scrollable {
+      margin: 20px 0;
+      background: #f9fafb;
+    }
+
+    .child {
+      display: inline-block;
+      padding: 4px 8px;
+      background-color: #e0f2fe;
+      color: #0369a1;
+      border-radius: 4px;
+      margin: 2px;
+      font-size: 0.9em;
+    }
+
+    #nested {
+      margin-top: 15px;
+      padding: 10px;
+      border: 1px dashed #cbd5e1;
+      border-radius: 6px;
+    }
+
+    #link {
+      color: #2563eb;
+      text-decoration: none;
+      margin: 0 5px;
+    }
+
+    #link:hover {
+      text-decoration: underline;
+    }
+
+    /* Ghost element for honeypot */
+    .ghost {
+      opacity: 0.5;
+      font-size: 0.8em;
+      margin-top: 10px;
+      color: #999;
+    }
+
+    .important-link {
+      visibility: hidden;
+    }
+  </style>
+</head>
+
+<body>
+  <h1 id="title">Human Browser Test Page</h1>
+  <p class="intro">Hello world</p>
+  <div id="container">
+    <button id="btn-visible" class="action-btn">Click Me</button>
+    <button id="btn-hidden" style="display:none">Hidden</button>
+    <button id="btn-opacity" style="opacity:0">Invisible</button>
+    <button id="btn-offscreen" class="sr-only" style="position:absolute;left:-9999px">Offscreen</button>
+    <div id="btn-tiny" style="width:1px;height:1px;overflow:hidden"></div>
+    <button id="btn-aria" aria-hidden="true">Aria Hidden</button>
+    <button id="btn-sponsored" class="sponsored">Sponsored</button>
+    <a id="btn-sneaky" class="important-link" href="#">Claim Reward</a>
+    <a id="link" href="https://example.com">Example Link</a>
+    <br />
+    <textarea id="text-input" placeholder="Type here" rows="4"
+      style="width: 90%; margin-top: 15px; display: block; font-family: inherit; font-size: 14px; padding: 10px;"></textarea>
+    <textarea id="text-area">existing text</textarea>
+    <select id="dropdown">
+      <option value="a">A</option>
+      <option value="b">B</option>
+      <option value="d">D</option>
+      <option value="c">C</option>
+    </select>
+    <div id="scrollable" style="height:100px;overflow:auto;border:1px solid #ccc;padding:8px;line-height:1.35">
+      <p><strong>Scrollable Content</strong></p>
+      <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Praesent vel turpis et velit dictum aliquet.</p>
+      <p>Donec luctus, lorem sed faucibus gravida, arcu risus vehicula tortor, non feugiat purus est vel lectus.</p>
+      <p>Sed commodo, nisl nec tincidunt feugiat, tortor sapien lacinia augue, vitae volutpat justo est et odio.</p>
+      <p>Curabitur volutpat erat non magna ullamcorper, id placerat justo tristique. Integer non lorem id nunc facilisis
+        feugiat.</p>
+      <p>Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia curae; Aenean in urna nec
+        sapien cursus bibendum.</p>
+      <p>Aliquam erat volutpat. Morbi rutrum, augue vitae ullamcorper tristique, nulla mi feugiat risus, sed porta lorem
+        augue non justo.</p>
+      <p>Fusce tempor arcu ac sem volutpat, eget porta mi tristique. Integer euismod justo ut mauris fermentum blandit.
+      </p>
+      <p>Nullam suscipit ligula ut ipsum viverra, sed pretium mauris aliquam. Quisque id nisi at dolor dapibus
+        scelerisque.</p>
+      <p>Nam vulputate, lorem at feugiat lobortis, neque dolor luctus justo, a convallis arcu mauris sit amet ipsum.</p>
+      <p>Fin.</p>
+    </div>
+    <div id="nested">
+      <span class="child">Child 1</span>
+      <span class="child">Child 2</span>
+      <span class="child special">Child 3</span>
+    </div>
+    <div id="honeypot-trap" class="ghost">Trap</div>
+    <div id="content-editable" contenteditable="true">Editable</div>
+    <div id="data-el" data-custom="hello" data-tracking="yes">Data</div>
+    <div style="height: 1500px;"></div> <!-- Spacer to force scroll -->
+    <div id="lazy-trigger" style="height: 20px; background: #eee; text-align: center;">Scroll here to load secrets</div>
+    <div id="lazy-target"></div>
+
+    <script>
+      const target = document.getElementById('lazy-target');
+      const trigger = document.getElementById('lazy-trigger');
+      const observer = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting) {
+          console.log('Lazy trigger visible! Fetching GitHub button...');
+          fetch('github_button.html')
+            .then(r => r.text())
+            .then(html => {
+              document.getElementById('lazy-target').innerHTML = html;
+              console.log('GitHub button loaded.');
+            });
+          observer.disconnect();
+        }
+      }, { threshold: 0.1 });
+
+      const btnVisible = document.getElementById('btn-visible');
+      if (btnVisible) {
+        btnVisible.addEventListener('click', () => {
+          btnVisible.textContent = 'Clicked!';
+          btnVisible.style.backgroundColor = '#dcfce7'; // Light green
+          btnVisible.style.borderColor = '#22c55e'; // Green border
+        });
+      }
+
+      if (trigger) observer.observe(trigger);
+    </script>
+  </div>
+</body>
+
+</html>

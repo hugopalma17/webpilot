@@ -40,6 +40,11 @@
 !SKILLS.md 
 
 # Tests
+!test/
 !test/*
 !test/**
+!test/server.js
+!test/all-commands.js 
+!test/fixtures.html 
+!test/github_button.html 
 
