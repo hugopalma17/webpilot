@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8">
+  <title>Raw Dispatch Failure Fixtures</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      padding: 40px;
+      background: #f5f5f5;
+    }
+
+    h2 {
+      margin-top: 30px;
+      font-size: 1em;
+      color: #555;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    button, .clickable {
+      display: inline-block;
+      padding: 8px 16px;
+      margin: 5px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #fff;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    /* Overlay setup */
+    #overlay-container {
+      position: relative;
+      display: inline-block;
+      margin: 5px;
+    }
+    #btn-under-overlay {
+      padding: 10px 24px;
+      background: #dbeafe;
+    }
+    #btn-overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(239, 68, 68, 0.25);
+      border: 2px solid #ef4444;
+      z-index: 10;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      color: #b91c1c;
+    }
+
+    /* Trap styles */
+    #trap-opacity   { opacity: 0; }
+    #trap-visibility { visibility: hidden; }
+    #trap-tiny      { width: 1px; height: 1px; overflow: hidden; padding: 0; border: none; }
+    #trap-offscreen { position: absolute; left: -9999px; top: -9999px; }
+    #trap-disappear { display: none; }
+  </style>
+</head>
+
+<body>
+  <!-- Sentinel: test waits for this element -->
+  <div id="ready"></div>
+
+  <h1>Raw Dispatch Failure Fixtures</h1>
+
+  <!-- ── DETECTABILITY ─────────────────────────────────── -->
+  <h2>Detectability</h2>
+
+  <!-- Bot-detection canary: records isTrusted of every click -->
+  <button id="btn-istrusted">isTrusted canary</button>
+
+  <!-- Event-sequence recorder -->
+  <button id="btn-sequence">Event sequence recorder</button>
+
+  <!-- Coordinate recorder -->
+  <button id="btn-coords">Coordinate recorder</button>
+
+  <!-- ── OVERLAY BYPASS ────────────────────────────────── -->
+  <h2>Overlay bypass</h2>
+
+  <div id="overlay-container">
+    <button id="btn-under-overlay">Under Overlay</button>
+    <div id="btn-overlay">OVERLAY</div>
+  </div>
+
+  <!-- ── CONTROL ───────────────────────────────────────── -->
+  <h2>Control (safe element)</h2>
+  <button id="btn-visible">Safe Visible Button</button>
+
+  <!-- ── TRAPS ─────────────────────────────────────────── -->
+  <h2>Traps</h2>
+
+  <!-- Honeypot class names -->
+  <button id="trap-honeypot" class="ghost sr-only">Honeypot (ghost + sr-only)</button>
+
+  <!-- aria-hidden -->
+  <button id="trap-aria" aria-hidden="true">Aria-hidden trap</button>
+
+  <!-- opacity: 0 -->
+  <button id="trap-opacity" style="opacity:0">Opacity-zero trap</button>
+
+  <!-- visibility: hidden -->
+  <button id="trap-visibility" style="visibility:hidden">Visibility-hidden trap</button>
+
+  <!-- 1×1 sub-pixel -->
+  <div id="trap-tiny" style="width:1px;height:1px;overflow:hidden;padding:0;border:none">T</div>
+
+  <!-- off-screen -->
+  <button id="trap-offscreen" style="position:absolute;left:-9999px;top:-9999px">Offscreen trap</button>
+
+  <!-- disappearing element (hidden by default, test code shows it then removes it) -->
+  <button id="trap-disappear" style="display:none">Disappearing trap</button>
+
+  <script>
+    // isTrusted canary — records last click's isTrusted value
+    document.getElementById('btn-istrusted').addEventListener('click', function(e) {
+      window.__lastIsTrusted = e.isTrusted;
+    });
+
+    // Event-sequence recorder
+    (function() {
+      var el = document.getElementById('btn-sequence');
+      window.__eventSeq = [];
+      el.addEventListener('mousedown', function() { window.__eventSeq.push('mousedown'); });
+      el.addEventListener('mouseup',   function() { window.__eventSeq.push('mouseup'); });
+      el.addEventListener('click',     function() { window.__eventSeq.push('click'); });
+    })();
+
+    // Coordinate recorder
+    document.getElementById('btn-coords').addEventListener('click', function(e) {
+      window.__lastCoords = { clientX: e.clientX, clientY: e.clientY };
+    });
+
+    // Overlay + target
+    document.getElementById('btn-under-overlay').addEventListener('click', function() {
+      window.__underOverlayClicked = (window.__underOverlayClicked || 0) + 1;
+    });
+    document.getElementById('btn-overlay').addEventListener('click', function() {
+      window.__overlayClicked = (window.__overlayClicked || 0) + 1;
+    });
+
+    // Visible button
+    document.getElementById('btn-visible').addEventListener('click', function() {
+      window.__visibleClicked = (window.__visibleClicked || 0) + 1;
+    });
+
+    // Trap counters
+    ['trap-honeypot','trap-aria','trap-opacity','trap-visibility','trap-tiny','trap-offscreen','trap-disappear'].forEach(function(id) {
+      var key = '__' + id.replace(/-/g,'_') + '_clicked';
+      var el = document.getElementById(id);
+      if (el) el.addEventListener('click', function() { window[key] = (window[key] || 0) + 1; });
+    });
+  </script>
+</body>
+</html>

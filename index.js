@@ -89,6 +89,23 @@ async function start(overrides = {}) {
   const transport = await server.waitForConnection();
   log('INFO', 'Extension connected — ready for commands');
 
+  // Close all tabs except the one on startUrl
+  try {
+    const tabs = await transport.send('tabs.list');
+    if (tabs.length > 1) {
+      const startUrl = config.startUrl || 'about:blank';
+      const keep = tabs.find(t => t.url === startUrl || t.active) || tabs[0];
+      for (const tab of tabs) {
+        if (tab.id !== keep.id) {
+          await transport.send('tabs.close', {}, tab.id);
+        }
+      }
+      log('INFO', `Closed ${tabs.length - 1} extra tab(s)`);
+    }
+  } catch (err) {
+    log('INFO', `Tab cleanup skipped: ${err.message}`);
+  }
+
   return { server, transport, browserProcess, config };
 }
 

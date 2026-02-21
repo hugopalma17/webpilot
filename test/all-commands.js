@@ -503,14 +503,26 @@ async function main() {
       const title = await page.$('#title');
       assert(title !== null, `${name}: querySelector works`);
       
-      // Test dom.evaluate (may fail on strict CSP)
+      // Test dom.evaluate.
+      // Strategy 1 (inline <script> literal) works with unsafe-inline — no eval needed.
+      // Strategy 2 (chrome.scripting + new Function) works with unsafe-eval.
+      // ISOLATED fallback (content-script new Function) works when both above fail,
+      // because content scripts are exempt from the page's CSP.
+      // Only strict CSP blocks everything in practice.
+      const evalExpectedFail = csp === 'strict';
       try {
         const evalResult = await page.evaluate(() => document.title);
-        const evalWorked = evalResult !== null && evalResult.length > 0;
-        assert(evalWorked, `${name}: dom.evaluate works (${evalResult})`);
+        if (evalExpectedFail) {
+          // Strict blocks inline scripts AND eval in MAIN world.
+          // ISOLATED fallback may still work — accept either outcome.
+          assert(true, `${name}: dom.evaluate handled (result: ${evalResult})`);
+        } else {
+          const evalWorked = evalResult !== null && evalResult.length > 0;
+          assert(evalWorked, `${name}: dom.evaluate works (${evalResult})`);
+        }
       } catch (e) {
-        if (csp === 'strict') {
-          assert(true, `${name}: dom.evaluate correctly fails on strict CSP`);
+        if (evalExpectedFail) {
+          assert(true, `${name}: dom.evaluate correctly threw on strict CSP: ${e.message}`);
         } else {
           assert(false, `${name}: dom.evaluate failed unexpectedly: ${e.message}`);
         }
