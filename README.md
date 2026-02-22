@@ -1,99 +1,177 @@
-# Human Browser Framework
+# Human Browser
 
-CDP-free browser automation framework exposed as a WebSocket interface.
+CDP-free browser automation with human-like behavior via Chrome extension + WebSocket.
 
-Your software controls Chromium through extension commands, and users can script it in any language as long as they send valid WebSocket messages.
+Control Chromium through a WebSocket protocol. Any language can connect. Built-in human-like mouse movement, typing, scrolling, and trap detection. No Puppeteer, no Playwright, no debugging port, no `navigator.webdriver`.
 
-## Core Idea
+## Install
 
-- Control channel: WebSocket JSON protocol (`ws://localhost:7331`)
-- Execution layer: MV3 extension + content script
-- Interaction layer: human-like actions (`human.click`, `human.type`, `human.scroll`, `human.clearInput`)
-- Safety layer: trap/honeypot checks + configurable avoid rules
-
-No Puppeteer/Playwright API is required on the client side.
-
-## Features
-
-- Tab control: list, navigate, reload, activate, close, wait for navigation, viewport resize
-- DOM control: query selectors, wait selectors, evaluate, element handles, click/focus/type/scroll
-- Human actions:
-  - non-linear bezier mouse movement with overshoot paths
-  - randomized timing and typing cadence (per-character with variance)
-  - scroll behavior with flick sub-scrolls and back-scroll variance
-  - trap/honeypot blocking (opacity zero, hidden/offscreen/tiny, aria-hidden, sub-pixel)
-  - configurable `avoid` rules per-request and global (selectors, classes, IDs, attributes)
-- Cookie support: get/set cookies for session bootstrap, cookiesChanged events
-- Frame inspection: list all frames in a tab (exposes iframes, trackers, detection systems)
-- Bulk DOM queries: `queryAllInfo` (selector + snapshot), `batchQuery` (multi-selector existence), `findScrollable` (scrollable containers), `elementHTML` (element HTML), `getHTML` (full page HTML, CSP-safe)
-- Events over WS: network responses, URL changes, cookie changes
-- Screenshots: viewport and full-page capture
-- CSP compatibility: MAIN world with automatic ISOLATED fallback on strict-CSP sites
-- Framework config pushed at runtime (handle lifetime, debug overlay, human behavior tuning)
-- Hot-reload: `framework.reload` to pick up extension code changes without restarting
-
-## Architecture
-
-1. Node server starts local WS bridge.
-2. Chromium launches with the extension and a clean profile.
-3. Extension connects to the WS bridge.
-4. Your script (any language) connects to the same WS endpoint.
-5. Commands are relayed to the extension and executed in-page.
+```bash
+npm install webpilot
+```
 
 ## Quick Start
 
-1. Configure browser path and behavior in `human-browser.config.js`.
-2. Start the framework:
+### 1. Configure
 
 ```bash
-node index.js
+cp node_modules/webpilot/human-browser.config.example.js human-browser.config.js
 ```
 
-3. Connect from your preferred language to:
+Edit `human-browser.config.js` — set your browser path:
 
-```text
-ws://localhost:7331
+```javascript
+module.exports = {
+  browser: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  // Linux:   "/usr/bin/google-chrome"
+  // Windows: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+  profile: "./profile",
+  port: 7331,
+};
 ```
 
-4. Send protocol messages:
+### 2. Start
+
+```bash
+npx webpilot start
+```
+
+### 3. Connect
+
+#### Interactive CLI
+
+```bash
+npx webpilot
+```
+
+```
+wp> go example.com
+wp> discover
+wp> click h1
+wp> type #search hello world
+wp> ss
+```
+
+#### Node.js (programmatic)
+
+```javascript
+const { startWithPage } = require('webpilot');
+
+const { page } = await startWithPage();
+await page.goto('https://example.com');
+await page.humanClick('h1');
+await page.humanType('Hello world', { selector: '#search' });
+```
+
+#### Any language (WebSocket)
+
+Connect to `ws://localhost:7331` and send JSON:
 
 ```json
-{
-  "id": "1",
-  "action": "tabs.navigate",
-  "params": { "url": "https://example.com" }
-}
+{ "id": "1", "action": "tabs.navigate", "params": { "url": "https://example.com" } }
 ```
 
-## Protocol Docs
+## CLI Reference
 
-Full command reference and wire format:
+**Navigation:**
+- `go <url>` — navigate (auto-adds `https://`)
+- `reload` / `back` / `forward` — page navigation
+- `sd [px] [selector]` — scroll down
+- `su [px] [selector]` — scroll up
 
-- `protocol/PROTOCOL.md`
+**Query:**
+- `q <selector>` — find all matches with handle IDs
+- `wait <selector>` — wait for selector to appear
+- `discover` — list all interactive elements
 
-This is the main contract for language-agnostic clients.
+**Interact:**
+- `click <selector|handleId>` — human click (bezier cursor + safety checks)
+- `type [selector] <text>` — human type (character-by-character with variance)
+- `clear <selector>` — clear input field
+- `focus <selector>` — focus element
+- `key <name>` — key press (Enter, Tab, Escape...)
 
-## Language-Agnostic Usage
+**Inspect:**
+- `eval <js>` — evaluate JavaScript
+- `title` / `url` / `html` — quick page info
+- `ss` — screenshot (saves PNG to current directory)
+- `box <selector>` — bounding box
+- `cookies` — dump all cookies
+- `frames` — list all frames
 
-If your language can open a WebSocket and send JSON, it can drive the framework.
+**Meta:**
+- `.tabs` — list tabs (with 0-9 aliases)
+- `.tab <n>` — switch active tab
+- `.events` — toggle event display
+- `.status` — connection info
+- `.quit` — exit
 
-Client responsibilities:
+**Raw mode:**
+- `action.name {"key": "value"}` — any protocol command
+- `{"id": "1", "action": "...", ...}` — raw WebSocket JSON
 
-- generate unique request `id`s
-- send `action` + `params`
-- correlate replies by `id`
-- handle async events (`response`, `urlChanged`)
+## Programmatic API
 
-## Debug CLI
+```javascript
+const {
+  start,           // Launch browser + WS server
+  startWithPage,   // start + return BridgePage on first tab
+  connectToServer, // Connect to already-running server
+  loadConfig,      // Load human-browser.config.js
+  BridgePage,      // Page automation class
+  BridgeElement,   // DOM element wrapper
+  BridgeKeyboard,  // Keyboard input
+  BridgeCursor,    // Mouse cursor with bezier movement
+} = require('webpilot');
+```
 
-A Go CLI (`cli/`) connects to the WebSocket and sends commands interactively. Useful for testing and debugging.
+## Architecture
+
+1. Node.js server starts a local WebSocket bridge on port 7331
+2. Chromium launches with the extension loaded into a clean profile
+3. The extension connects to the WS bridge from its service worker
+4. Your code (any language) connects to the same WS endpoint
+5. Commands are relayed to the extension and executed in-page
+
+The extension runs as a content script in Chrome's ISOLATED world. No CDP, no debugging protocol, no detectable automation flags.
+
+### Human Behavior
+
+All `human.*` commands include:
+
+- Bezier curve mouse movement with overshoot
+- Randomized timing and typing cadence
+- Scroll behavior with flick sub-scrolls and back-scroll variance
+- 13-point honeypot/trap detection (aria-hidden, offsetParent, opacity, visibility, sub-pixel, bounding-box shift, class-name regex)
+- Configurable `avoid` rules per-request and global
+
+### Safety Layer
+
+`human.click` returns `{ clicked: false, reason: "..." }` instead of clicking unsafe elements:
+
+- `aria-hidden` — screen reader hidden
+- `honeypot-class` — trap class names (ghost, sr-only, visually-hidden, etc.)
+- `opacity-zero` / `visibility-hidden` — invisible elements
+- `sub-pixel` — elements smaller than 5x5px
+- `element-shifted` — element moved during think time
+- `no-bounding-box` / `element-disappeared` — element not in DOM
+
+## Protocol
+
+Full WebSocket protocol specification: [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md)
+
+## LLM Integration
+
+For AI agents that need to browse the web: [`SKILLS.md`](SKILLS.md)
+
+## Go CLI
+
+A compiled Go CLI is also available in `cli/` for users who prefer a standalone binary:
 
 ```bash
 cd cli && go build -o hb && ./hb
 ```
 
-## Stability Notes
+## License
 
-- This reduces obvious automation artifacts but is not a guarantee against all anti-bot systems.
-- Keep extension and framework versions aligned.
-- Prefer behavior-driven tests for parity across updates (`test/all-commands.js`).
+Apache 2.0

@@ -6,9 +6,8 @@
 !index.js
 !package.json
 !package-lock.json
-!human-browser.config.js
-
-
+!human-browser.config.example.js
+!LICENSE
 
 # Server + launcher
 !lib/
@@ -37,7 +36,11 @@
 !protocol/
 !protocol/PROTOCOL.md
 !README.md
-!SKILLS.md 
+!SKILLS.md
+
+# JS CLI
+!bin/
+!bin/cli.js
 
 # Debug CLI (Go)
 !cli/
@@ -53,4 +56,3 @@
 !test/all-commands.js
 !test/fixtures.html
 !test/github_button.html
-

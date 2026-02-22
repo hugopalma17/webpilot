@@ -1,19 +1,19 @@
 module.exports = {
-  // Path to any Chromium-based binary (Chrome, Chromium, Brave, Helium, etc.)
-  browser: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-
-  // Spoof user agent — match your real browser to avoid fingerprint mismatches
-  // userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+  // Path to any Chromium-based binary (Chrome, Chromium, Brave, Edge, etc.)
+  // macOS:   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  // Linux:   "/usr/bin/google-chrome" or "/usr/bin/chromium-browser"
+  // Windows: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+  browser: "",
 
   // Where to store the browser profile (bookmarks, cookies, extensions state)
-  // ~ expands to home directory
-  profile: "~/.human-browser/profile",
+  // Relative paths resolve from your project root
+  profile: "./profile",
 
   // WebSocket port — must match extension/service-worker.js WS_URL
   port: 7331,
 
   // URL to open on launch
-  startUrl: "https://hugopalma.work",
+  startUrl: "about:blank",
 
   // Browser window size
   viewport: { width: 1920, height: 1080 },
@@ -30,9 +30,7 @@ module.exports = {
   // Framework runtime tuning pushed into the extension/content script
   framework: {
     handles: {
-      // Keep handle refs alive longer for long-running flows (e.g. scraper card loops)
       ttlMs: 15 * 60 * 1000,
-      // Frequency for stale handle cleanup sweeps
       cleanupIntervalMs: 60 * 1000,
     },
     debug: {
@@ -40,12 +38,11 @@ module.exports = {
       cursor: true,
 
       // Open Chrome DevTools Protocol port for chrome://inspect
-      // Lets you watch DOM, network, console while commands flow through WebSocket
       // Off by default — adds the CDP fingerprint that automation detectors look for
-       //devtools: true,
+      // devtools: true,
 
       // Log raw WebSocket traffic to debug_session.log in project root
-       sessionLog: true,
+      // sessionLog: true,
     },
   },
 

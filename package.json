@@ -1,8 +1,28 @@
 {
-  "name": "human-browser",
-  "version": "1.0.15",
+  "name": "webpilot",
+  "version": "0.1.0",
   "description": "CDP-free browser automation with human-like behavior via Chrome extension + WebSocket",
   "main": "index.js",
+  "bin": {
+    "webpilot": "bin/cli.js",
+    "wp": "bin/cli.js"
+  },
+  "files": [
+    "index.js",
+    "lib/",
+    "client/",
+    "extension/",
+    "bin/",
+    "protocol/PROTOCOL.md",
+    "SKILLS.md",
+    "human-browser.config.example.js",
+    "LICENSE",
+    "README.md"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client/index.js"
+  },
   "scripts": {
     "start": "node index.js",
     "test": "node test/integration.js"
@@ -14,11 +34,24 @@
     "websocket",
     "chrome-extension",
     "anti-detection",
-    "cdp-free"
+    "cdp-free",
+    "stealth",
+    "scraping",
+    "puppeteer-alternative",
+    "ai-agent",
+    "llm",
+    "web-automation"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hugopalma17/webpilot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hugopalma17/webpilot/issues"
+  },
   "author": "Hugo Palma",
-  "homepage": "https://github.com/hugopalma17/human-browser",
-  "license": "ISC",
+  "homepage": "https://github.com/hugopalma17/webpilot",
+  "license": "Apache-2.0",
   "type": "commonjs",
   "engines": {
     "node": ">=18.0.0"

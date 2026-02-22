@@ -2,7 +2,8 @@ const { execSync } = require("child_process");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const config = require("../human-browser.config.js");
+const { loadConfig } = require("../index");
+const config = loadConfig();
 
 // Kill any previously running instance of this server + stale browsers
 try {
