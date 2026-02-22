@@ -15,17 +15,22 @@ No Puppeteer/Playwright API is required on the client side.
 
 ## Features
 
-- Tab control: list, navigate, reload, activate, close, wait for navigation
+- Tab control: list, navigate, reload, activate, close, wait for navigation, viewport resize
 - DOM control: query selectors, wait selectors, evaluate, element handles, click/focus/type/scroll
 - Human actions:
-  - non-linear mouse movement
-  - randomized timing and typing cadence
-  - scroll behavior with back-scroll variance
-  - trap/honeypot blocking (opacity zero, hidden/offscreen/tiny patterns, etc.)
-- Cookie support: get/set cookies for session bootstrap
-- Events over WS: network responses and URL changes
+  - non-linear bezier mouse movement with overshoot paths
+  - randomized timing and typing cadence (per-character with variance)
+  - scroll behavior with flick sub-scrolls and back-scroll variance
+  - trap/honeypot blocking (opacity zero, hidden/offscreen/tiny, aria-hidden, sub-pixel)
+  - configurable `avoid` rules per-request and global (selectors, classes, IDs, attributes)
+- Cookie support: get/set cookies for session bootstrap, cookiesChanged events
+- Frame inspection: list all frames in a tab (exposes iframes, trackers, detection systems)
+- Bulk DOM queries: `queryAllInfo` (selector + snapshot), `batchQuery` (multi-selector existence), `findScrollable` (scrollable containers), `elementHTML` (element HTML), `getHTML` (full page HTML, CSP-safe)
+- Events over WS: network responses, URL changes, cookie changes
 - Screenshots: viewport and full-page capture
-- Framework config pushed at runtime (handle lifetime, debug defaults, human behavior tuning)
+- CSP compatibility: MAIN world with automatic ISOLATED fallback on strict-CSP sites
+- Framework config pushed at runtime (handle lifetime, debug overlay, human behavior tuning)
+- Hot-reload: `framework.reload` to pick up extension code changes without restarting
 
 ## Architecture
 
@@ -78,6 +83,14 @@ Client responsibilities:
 - send `action` + `params`
 - correlate replies by `id`
 - handle async events (`response`, `urlChanged`)
+
+## Debug CLI
+
+A Go CLI (`cli/`) connects to the WebSocket and sends commands interactively. Useful for testing and debugging.
+
+```bash
+cd cli && go build -o hb && ./hb
+```
 
 ## Stability Notes
 

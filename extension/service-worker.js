@@ -120,6 +120,11 @@ async function handleCommand(msg) {
       version: chrome.runtime.getManifest().version,
     };
   }
+  if (action === "framework.reload") {
+    // Force-reload the extension (restarts service worker with fresh code)
+    setTimeout(() => chrome.runtime.reload(), 100);
+    return { reloading: true };
+  }
 
   const tabId = await resolveTabId(msg.tabId);
 
@@ -362,6 +367,14 @@ async function handleCommand(msg) {
       lastCursorY = params.y;
       return { saved: true };
     // Human commands — forward to content script (it handles all timing + detection)
+    case "frames.list": {
+      const frames = await chrome.webNavigation.getAllFrames({ tabId });
+      return (frames || []).map(f => ({
+        frameId: f.frameId,
+        parentFrameId: f.parentFrameId,
+        url: f.url,
+      }));
+    }
     case "human.click":
     case "human.type":
     case "human.scroll":
@@ -582,9 +595,8 @@ async function ensureContentScript(tabId) {
 }
 
 function forwardToContentScript(tabId, action, params) {
-  // Always target main frame (frameId: 0) to avoid iframe content scripts
-  // responding with a different handle registry
-  const opts = { frameId: 0 };
+  // Default to main frame (frameId: 0), but allow targeting iframes via params.frameId
+  const opts = { frameId: (params && params.frameId != null) ? params.frameId : 0 };
   const providedFrameworkConfig = params && params.__frameworkConfig;
   const payload = {
     action,
@@ -676,6 +688,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ result: { saved: true } });
     return;
   }
+});
+
+// Cookie persistence — debounce changes, flush full jar to server
+let cookieFlushTimer = null;
+chrome.cookies.onChanged.addListener(() => {
+  clearTimeout(cookieFlushTimer);
+  cookieFlushTimer = setTimeout(async () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        const cookies = await chrome.cookies.getAll({});
+        ws.send(JSON.stringify({
+          type: 'event',
+          event: 'cookiesChanged',
+          data: { cookies, count: cookies.length },
+        }));
+      } catch {}
+    }
+  }, 2000);
 });
 
 connect();

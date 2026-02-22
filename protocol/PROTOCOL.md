@@ -65,8 +65,9 @@ The extension runtime is configurable through:
 
 | Action | Params | Returns |
 |--------|--------|---------|
-| `framework.setConfig` | `{ config: { handles?: { ttlMs?, cleanupIntervalMs? }, debug?: { enabled? } } }` | `{ ok: true, framework }` |
-| `framework.getConfig` | `{}` | `{ framework }` |
+| `framework.setConfig` | `{ config: { handles?: { ttlMs?, cleanupIntervalMs? }, debug?: { cursor?, devtools?, sessionLog? } } }` | `{ ok: true, framework }` |
+| `framework.getConfig` | `{}` | `{ framework, version }` |
+| `framework.reload` | `{}` | `{ reloading: true }` — force-reloads extension (picks up new code) |
 
 For normal use, the Node bridge automatically injects framework config from `human-browser.config.js` into `dom.*` and `human.*` commands.
 You can also update/read it explicitly with `framework.setConfig` and `framework.getConfig`.
@@ -86,6 +87,12 @@ You can also update/read it explicitly with `framework.setConfig` and `framework
 | `tabs.waitForNavigation` | `{ timeout? }` | `{ success: true }` |
 | `tabs.setViewport` | `{ width, height }` | `{ success: true }` |
 | `tabs.screenshot` | `{ fullPage? }` | `{ dataUrl }` (base64 PNG) |
+
+## Actions: Frames
+
+| Action | Params | Returns |
+|--------|--------|---------|
+| `frames.list` | `{}` | `[{ frameId, parentFrameId, url }]` — all frames in the tab (requires `webNavigation` permission) |
 
 ## Actions: Cookies
 
@@ -113,13 +120,18 @@ You can also update/read it explicitly with `framework.setConfig` and `framework
 | `dom.keyPress` | `{ key }` | `{ pressed: true }` |
 | `dom.keyDown` | `{ key }` | `{ down: true }` |
 | `dom.keyUp` | `{ key }` | `{ up: true }` |
-| `dom.scroll` | `{ selector?, direction?, amount?, behavior? }` | `{ scrolled: true }` |
+| `dom.scroll` | `{ handleId? \| selector?, direction?, amount?, behavior? }` | `{ scrolled: true, before, after, target }` |
 | `dom.setValue` | `{ handleId \| selector, value }` | `{ set: true }` |
 | `dom.getAttribute` | `{ handleId \| selector, name }` | string or `null` |
 | `dom.getProperty` | `{ handleId \| selector, name }` | any |
 | `dom.evaluate` | `{ fn, args? }` | any (serializable) |
 | `dom.elementEvaluate` | `{ handleId, fn, args? }` | any (serializable) |
 | `dom.evaluateHandle` | `{ fn, args?, elementMarkers? }` | `{ type, handleId?, value?, properties? }` |
+| `dom.getHTML` | `{}` | `{ html, title, url }` — full page HTML from ISOLATED world (CSP-safe) |
+| `dom.elementHTML` | `{ handleId, limit? }` | `{ outer, inner, tag }` — element HTML (default limit 5000 chars) |
+| `dom.queryAllInfo` | `{ selector }` | `[{ handleId, tag, id, cls, text, label }]` — query + snapshot in one call |
+| `dom.batchQuery` | `{ selectors: [...] }` | `{ [selector]: boolean }` — check existence of multiple selectors |
+| `dom.findScrollable` | `{}` | `[{ handleId, tag, id, cls, overflowY, overflow, scrollHeight, clientHeight, children, text }]` |
 | `dom.discoverElements` | `{}` | `{ elements, cursor, viewport, scrollY }` |
 | `dom.setDebug` | `{ enabled }` | `{ debug: boolean }` |
 
@@ -164,7 +176,7 @@ Human commands include built-in safety checks (honeypot detection, bezier cursor
 9. Scroll element into comfortable view (`scrollIntoView` + fallback human scroll steps)
 10. If cursor is within 80px of target, drift to a random nearby point first (avoids teleport-click appearance)
 11. Bezier mouse movement to element (overshoot path if dist > 200px)
-12. Random think-time delay (200-500ms default)
+12. Random think-time delay (150-400ms default)
 13. Element disappeared during delay → `reason: "element-disappeared"`
 14. Element shifted > 50px during delay → `reason: "element-shifted"`
 15. Dispatch `mousedown → mouseup → click` on `document.elementFromPoint(cursorX, cursorY)` — if nothing is at cursor coordinates, click aborts
@@ -185,8 +197,8 @@ Human commands include built-in safety checks (honeypot detection, bezier cursor
 **Returns**: `{ "typed": true }` or `{ "typed": false, "reason": "avoided" }`
 
 Typing behavior:
-- Per-character dispatch with random delays (100-250ms ± 30ms)
-- 15% chance of "thinking pause" (200-600ms) between characters
+- Per-character dispatch with random delays (80-180ms ± 25ms)
+- 12% chance of "thinking pause" (150-400ms) between characters
 - Minimum 50ms per character
 - Uses native value setter for React/framework compatibility
 
@@ -196,18 +208,20 @@ Typing behavior:
 {
   "action": "human.scroll",
   "params": {
-    "selector": ".results-panel",
+    "handleId": "el_7",
     "direction": "down"
   }
 }
 ```
 
+Accepts `handleId`, `selector`, or neither (scrolls window). If the target element is scrollable, scrolls it; otherwise scrolls the window.
+
 **Returns**: `{ "scrolled": true, "amount": 487 }`
 
 Scroll behavior:
-- Random scroll amount (300-700px default)
-- Smooth scrolling
-- 20% chance of small back-scroll (20-100px) for realism
+- Random scroll amount (250-550px default)
+- Smooth scrolling with flick-style sub-scrolls
+- 10% chance of small back-scroll for realism
 - Scrolls the specified element if scrollable, otherwise scrolls the window
 
 ### human.clearInput
@@ -264,6 +278,12 @@ Fired when an HTTP request completes in any tab.
 Fired when a tab's URL changes (navigation, pushState, replaceState).
 ```json
 { "type": "event", "event": "urlChanged", "data": { "tabId": 123, "url": "https://..." } }
+```
+
+### `cookiesChanged`
+Fired periodically (every 2s) when cookie count changes for the active tab.
+```json
+{ "type": "event", "event": "cookiesChanged", "data": { "cookies": [...], "count": 42 } }
 ```
 
 ---

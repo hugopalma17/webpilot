@@ -39,12 +39,18 @@
 !README.md
 !SKILLS.md 
 
+# Debug CLI (Go)
+!cli/
+!cli/main.go
+!cli/go.mod
+!cli/go.sum
+
 # Tests
 !test/
 !test/*
 !test/**
 !test/server.js
-!test/all-commands.js 
-!test/fixtures.html 
-!test/github_button.html 
+!test/all-commands.js
+!test/fixtures.html
+!test/github_button.html
 

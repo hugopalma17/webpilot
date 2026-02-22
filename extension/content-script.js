@@ -8,7 +8,7 @@ const frameworkRuntime = {
     cleanupIntervalMs: 60 * 1000,
   },
   debug: {
-    enabled: true,
+    cursor: true,
   },
 };
 let handleCleanupTimer = null;
@@ -84,7 +84,7 @@ function saveCursorPosition() {
 }
 
 // Debug mode — defaults are configurable from framework config.
-let debugMode = frameworkRuntime.debug.enabled;
+let debugMode = frameworkRuntime.debug.cursor;
 
 function applyFrameworkConfig(rawConfig) {
   if (!rawConfig || typeof rawConfig !== "object") return;
@@ -109,9 +109,9 @@ function applyFrameworkConfig(rawConfig) {
   if (
     rawConfig.debug &&
     typeof rawConfig.debug === "object" &&
-    typeof rawConfig.debug.enabled === "boolean"
+    typeof rawConfig.debug.cursor === "boolean"
   ) {
-    debugMode = rawConfig.debug.enabled;
+    debugMode = rawConfig.debug.cursor;
     if (!debugMode) clearTrail();
   }
 }
@@ -387,6 +387,22 @@ function actionQuerySelectorWithin(params) {
 function actionQuerySelectorAllWithin(params) {
   const parent = getHandle(params.parentHandleId);
   return Array.from(parent.querySelectorAll(params.selector)).map(storeHandle);
+}
+
+// Action: dom.queryAllInfo — single-call querySelectorAll + handles + element info
+function actionQueryAllInfo(params) {
+  const els = document.querySelectorAll(params.selector);
+  return Array.from(els).map(el => {
+    const handleId = storeHandle(el);
+    return {
+      handleId,
+      tag: el.tagName.toLowerCase(),
+      id: el.id || null,
+      cls: [...el.classList].slice(0, 3).join(' ') || null,
+      text: (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60) || null,
+      label: el.getAttribute('aria-label') || el.getAttribute('name') || el.getAttribute('placeholder') || (el.labels && el.labels[0] ? el.labels[0].textContent.trim() : null),
+    };
+  });
 }
 
 // Action: dom.boundingBox
@@ -789,13 +805,19 @@ function actionScroll(params) {
   const left =
     direction === "right" ? amount : direction === "left" ? -amount : 0;
 
-  let el = selector ? document.querySelector(selector) : null;
-  if (el && el.scrollHeight > el.clientHeight + 10) {
-    el.scrollBy({ top, left, behavior });
-  } else {
-    window.scrollBy({ top, left, behavior });
+  // Support handleId, selector, or fallback to window
+  let el = null;
+  if (params.handleId) {
+    el = resolveElement(params);
+  } else if (selector) {
+    el = document.querySelector(selector);
   }
-  return { scrolled: true };
+  const target = (el && el.scrollHeight > el.clientHeight + 10) ? el : window;
+  const before = target === window ? window.scrollY : target.scrollTop;
+  target.scrollBy({ top, left, behavior });
+  // Check actual scroll after a tick (smooth may not be instant)
+  const after = target === window ? window.scrollY : target.scrollTop;
+  return { scrolled: true, before, after, target: target === window ? "window" : "element" };
 }
 
 // Action: dom.focus
@@ -1035,9 +1057,9 @@ async function actionHumanClick(params) {
   const el = resolveElement(params);
   const config = params.config || {};
   const minDelay =
-    config.thinkDelayMin !== undefined ? config.thinkDelayMin : 200;
+    config.thinkDelayMin !== undefined ? config.thinkDelayMin : 150;
   const maxDelay =
-    config.thinkDelayMax !== undefined ? config.thinkDelayMax : 500;
+    config.thinkDelayMax !== undefined ? config.thinkDelayMax : 400;
   const maxShift = config.maxShiftPx !== undefined ? config.maxShiftPx : 50;
 
   // Check custom avoid rules
@@ -1097,13 +1119,13 @@ async function actionHumanClick(params) {
 async function actionHumanType(params) {
   const { text, handleId, selector } = params;
   const config = params.config || {};
-  const baseMin = config.baseDelayMin !== undefined ? config.baseDelayMin : 100;
-  const baseMax = config.baseDelayMax !== undefined ? config.baseDelayMax : 250;
-  const variance = config.variance !== undefined ? config.variance : 30;
+  const baseMin = config.baseDelayMin !== undefined ? config.baseDelayMin : 80;
+  const baseMax = config.baseDelayMax !== undefined ? config.baseDelayMax : 180;
+  const variance = config.variance !== undefined ? config.variance : 25;
   const pauseChance =
-    config.pauseChance !== undefined ? config.pauseChance : 0.15;
-  const pauseMin = config.pauseMin !== undefined ? config.pauseMin : 200;
-  const pauseMax = config.pauseMax !== undefined ? config.pauseMax : 600;
+    config.pauseChance !== undefined ? config.pauseChance : 0.12;
+  const pauseMin = config.pauseMin !== undefined ? config.pauseMin : 150;
+  const pauseMax = config.pauseMax !== undefined ? config.pauseMax : 400;
 
   // Resolve target
   let target;
@@ -1216,20 +1238,20 @@ async function actionHumanType(params) {
 
 async function actionHumanScroll(params) {
   const config = params.config || {};
-  const flickMin = config.flickMin !== undefined ? config.flickMin : 200;
-  const flickMax = config.flickMax !== undefined ? config.flickMax : 400;
+  const flickMin = config.flickMin !== undefined ? config.flickMin : 150;
+  const flickMax = config.flickMax !== undefined ? config.flickMax : 350;
   const backScrollChance =
-    config.backScrollChance !== undefined ? config.backScrollChance : 0.15;
+    config.backScrollChance !== undefined ? config.backScrollChance : 0.1;
   const backScrollMin =
-    config.backScrollMin !== undefined ? config.backScrollMin : 20;
+    config.backScrollMin !== undefined ? config.backScrollMin : 15;
   const backScrollMax =
-    config.backScrollMax !== undefined ? config.backScrollMax : 80;
+    config.backScrollMax !== undefined ? config.backScrollMax : 60;
 
   const { selector, direction = "down", amount } = params;
 
   // Determine total amount: use param if provided, else randomized default from config
-  const defaultMin = config.amountMin !== undefined ? config.amountMin : 300;
-  const defaultMax = config.amountMax !== undefined ? config.amountMax : 700;
+  const defaultMin = config.amountMin !== undefined ? config.amountMin : 250;
+  const defaultMax = config.amountMax !== undefined ? config.amountMax : 550;
 
   const totalAmount =
     amount !== undefined
@@ -1237,7 +1259,12 @@ async function actionHumanScroll(params) {
       : defaultMin + Math.floor(Math.random() * (defaultMax - defaultMin + 1));
   let remaining = totalAmount;
 
-  let el = selector ? document.querySelector(selector) : null;
+  let el = null;
+  if (params.handleId) {
+    try { el = resolveElement(params); } catch {}
+  } else if (selector) {
+    el = document.querySelector(selector);
+  }
   const isTargetScrollable = el && el.scrollHeight > el.clientHeight + 10;
   const target = isTargetScrollable ? el : window;
 
@@ -1371,6 +1398,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "dom.querySelectorAllWithin":
         sendResponse({ result: actionQuerySelectorAllWithin(params) });
         return;
+      case "dom.queryAllInfo":
+        sendResponse({ result: actionQueryAllInfo(params) });
+        return;
       case "dom.batchQuery":
         sendResponse({ result: actionBatchQuery(params) });
         return;
@@ -1424,6 +1454,47 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }
         });
         return;
+      case "dom.elementHTML": {
+        // CSP-safe: get outerHTML/innerHTML of a specific handle
+        const ehEl = resolveElement(params);
+        sendResponse({
+          result: {
+            outer: ehEl.outerHTML.slice(0, params.limit || 5000),
+            inner: ehEl.innerHTML.slice(0, params.limit || 5000),
+            tag: ehEl.tagName.toLowerCase(),
+          }
+        });
+        return;
+      }
+      case "dom.findScrollable": {
+        // Find all scrollable containers on the page
+        const scrollables = [];
+        const all = document.querySelectorAll('*');
+        for (const el of all) {
+          if (el.scrollHeight > el.clientHeight + 20 && el !== document.documentElement && el !== document.body) {
+            const style = getComputedStyle(el);
+            const oy = style.overflowY;
+            const ox = style.overflow;
+            if (oy === 'visible' && ox === 'visible') continue; // skip non-scrollable
+            const hid = storeHandle(el);
+              scrollables.push({
+                handleId: hid,
+                tag: el.tagName.toLowerCase(),
+                id: el.id || null,
+                cls: [...el.classList].slice(0, 3).join(' ') || null,
+                overflowY: oy,
+                overflow: ox,
+                scrollHeight: el.scrollHeight,
+                clientHeight: el.clientHeight,
+                children: el.children.length,
+                text: (el.textContent || '').trim().slice(0, 80),
+              });
+            }
+          }
+        }
+        sendResponse({ result: scrollables });
+        return;
+      }
       case "dom.waitForSelector":
         actionWaitForSelector(params, sendResponse);
         return true; // async
@@ -1745,7 +1816,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       case "dom.setDebug":
         debugMode = !!params.enabled;
-        frameworkRuntime.debug.enabled = debugMode;
+        frameworkRuntime.debug.cursor = debugMode;
         if (!debugMode) clearTrail();
         sendResponse({ result: { debug: debugMode } });
         return;

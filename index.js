@@ -1,7 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { createServer, log, setLogLevel } = require('./lib/server');
+const { createServer, log, setLogLevel, initDebugLog, debugLog } = require('./lib/server');
 const { launchBrowser } = require('./lib/launcher');
 const { BridgePage } = require('./client/page');
 const client = require('./client');
@@ -25,7 +25,9 @@ const CONFIG_DEFAULTS = {
       cleanupIntervalMs: 60 * 1000,
     },
     debug: {
-      enabled: true,
+      cursor: true,
+      // devtools: false,
+      // sessionLog: false,
     },
   },
   human: {
@@ -78,6 +80,11 @@ async function start(overrides = {}) {
     require('child_process').execSync(`lsof -ti:${port} | xargs kill -9 2>/dev/null || true`, { stdio: 'ignore' });
   } catch {}
 
+  const fwDebug = config.framework?.debug || {};
+
+  if (fwDebug.sessionLog) {
+    initDebugLog(path.join(process.cwd(), 'debug_session.log'));
+  }
   log('INFO', `Human Browser starting on port ${port}`);
 
   const server = createServer(config);
@@ -85,9 +92,28 @@ async function start(overrides = {}) {
 
   const browserProcess = launchBrowser(config, extensionPath);
   log('INFO', `Browser launched (PID ${browserProcess.pid})`);
+  if (fwDebug.devtools) {
+    log('INFO', `DevTools CDP port enabled: chrome://inspect or http://localhost:9222`);
+  }
 
   const transport = await server.waitForConnection();
   log('INFO', 'Extension connected — ready for commands');
+
+  // Version check: compare running extension vs local manifest
+  try {
+    const manifestPath = path.join(__dirname, 'extension', 'manifest.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const extConfig = await transport.send('framework.getConfig');
+    debugLog('---', `Extension v${extConfig.version} (manifest: ${manifest.version})`);
+    if (extConfig.version !== manifest.version) {
+      log('WARN', `Extension version mismatch! Running: ${extConfig.version}, expected: ${manifest.version}`);
+      debugLog('!!!', `VERSION MISMATCH running=${extConfig.version} expected=${manifest.version}`);
+    } else {
+      log('INFO', `Extension v${extConfig.version} verified`);
+    }
+  } catch (err) {
+    log('WARN', `Version check failed: ${err.message}`);
+  }
 
   // Close all tabs except the one on startUrl
   try {

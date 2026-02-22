@@ -1,209 +1,299 @@
 ---
 name: human-browser
-description: Use this skill when an LLM/subagent needs to navigate websites and interact with pages through the Human Browser WebSocket framework instead of Puppeteer/Playwright/CDP.
+description: Skill for LLM agents to browse the web through the Human Browser WebSocket protocol. Covers navigation, interaction, data extraction, and recovery.
 ---
 
-# Human Browser Subagent Skill
+# Human Browser — LLM Navigation Skill
 
-Use this skill when an LLM/subagent needs to navigate websites and interact with pages through the Human Browser WebSocket framework instead of Puppeteer/Playwright/CDP.
+You control a real Chrome browser through WebSocket JSON messages (`ws://localhost:7331`). A Chrome extension receives your commands and executes them in-page with human-like behavior. You cannot see the page — you must look before every action.
 
-## Scope
+## Mental Model
 
-- Drive browser behavior through `ws://localhost:7331`.
-- Use protocol actions from `protocol/PROTOCOL.md`.
-- Prefer human-like actions (`human.*`) for user-facing interactions.
-- Keep DOM reads and extraction via `dom.*`.
+You are **blind**. The browser is a room you navigate by touch. Before every action:
 
-## Preconditions
+1. **Look** — read the page (`dom.getHTML`, `dom.discoverElements`, `tabs.screenshot`)
+2. **Think** — pick the right element from what you actually saw
+3. **Act** — interact with it (`human.click`, `human.type`, `human.scroll`)
+4. **Verify** — confirm the action worked (re-read, check URL, wait for expected element)
 
-- Framework server is running (`node index.js`).
-- Extension is connected.
-- Client can open WebSocket and send JSON.
+Never guess selectors. Never assume page state. Always look first.
 
-## Trigger Conditions
+## Wire Format
 
-Apply this skill when the task includes any of:
+Every message you send:
+```json
+{ "id": "unique-id", "tabId": 123, "action": "action.name", "params": {} }
+```
 
-- "navigate site"
-- "click/type/scroll like a human"
-- "avoid traps/honeypots"
-- "browser automation via websocket"
-- "language-agnostic browser scripting"
+Every response you receive:
+```json
+{ "id": "same-id", "result": { ... } }
+```
 
-## Operating Rules
+Or on error:
+```json
+{ "id": "same-id", "error": "message" }
+```
 
-- Use `human.click` for clickable UI interactions.
-- Use `human.type` for typing text into focused fields.
-- Use `human.scroll` for scrolling panels/pages.
-- Use `human.clearInput` before replacing text in inputs.
-- Use `dom.querySelector` and `dom.waitForSelector` before interacting.
-- Use `dom.evaluate`/`dom.elementEvaluate` for extraction only.
-- Treat hidden/ghost/offscreen/tiny targets as unsafe unless explicitly required.
+You may also receive unsolicited events:
+```json
+{ "type": "event", "event": "urlChanged", "data": { "tabId": 123, "url": "..." } }
+{ "type": "event", "event": "response", "data": { "url": "...", "status": 200, "tabId": 123 } }
+```
 
-## Standard Interaction Flow
+Always use a unique `id` per request. Always include `tabId` (get it from `tabs.list`).
 
-1. `tabs.list`
-2. `tabs.navigate` to target URL
-3. `dom.waitForSelector` on a known stable element
-4. `dom.querySelector` for actionable element
-5. `human.click` to focus/open
-6. `human.type` or keyboard command as needed
-7. `human.scroll` if content is off-screen
-8. `dom.evaluate` to validate result state
+## Your Eyes
 
-## Reliability Patterns
+These are your tools for understanding the page. Use them constantly.
 
-- Always include unique request `id`.
-- Match responses by `id`.
-- Handle unsolicited events: `response`, `urlChanged`.
-- On timeout, retry with a fresh selector query.
-- On element-handle errors, re-query selector and continue.
-- On route drift, re-navigate to canonical URL and resume.
+| Command | What it gives you | When to use |
+|---------|-------------------|-------------|
+| `dom.getHTML` | Full page HTML (title, url, html) | Understanding page structure, extracting data |
+| `dom.discoverElements` | List of interactive elements with labels, roles, positions | Deciding what to click or type into |
+| `dom.queryAllInfo` | Elements matching a selector with handleId, tag, id, class, text, label | Narrowing down from a known selector pattern |
+| `tabs.screenshot` | Base64 PNG of the viewport | Visual debugging, understanding layout |
+| `dom.findScrollable` | All scrollable containers with handleIds | Finding panels to scroll for more content |
+| `dom.boundingBox` | Position and size of an element | Checking if element is visible/on-screen |
 
-## Safety Patterns
+### Looking strategy
 
-- Use `avoid` filters in `human.click` for known bad classes/selectors.
-- Respect `clicked:false` with reason; do not force-click hidden traps.
-- Re-validate target URL after key navigation actions.
+1. **First visit to a page**: Use `dom.getHTML` to understand the full structure. It returns raw HTML — parse it to find patterns, selectors, data attributes.
+2. **Before clicking**: Use `dom.discoverElements` to see what's interactive, or `dom.queryAllInfo` with a candidate selector to find your target.
+3. **After an action**: Use `dom.waitForSelector` on something you expect to appear, then look again to confirm.
+4. **When lost**: `tabs.screenshot` gives you a visual snapshot. `dom.getHTML` gives you the truth.
 
-## Command Templates
+## Your Hands
 
-### Navigate
+Two tiers of interaction commands exist. **Always prefer human commands.**
+
+### Human commands (safe — use these)
+
+Human commands include bezier cursor movement, randomized timing, honeypot detection, and avoid-rule checking. They behave like a real person.
+
+| Command | Purpose | Key params |
+|---------|---------|------------|
+| `human.click` | Click an element | `handleId` or `selector`, optional `avoid` |
+| `human.type` | Type text character-by-character | `text`, optional `handleId`/`selector` |
+| `human.scroll` | Scroll a panel or the page | `handleId`/`selector`, `direction` |
+| `human.clearInput` | Focus + select-all + delete | `handleId` or `selector` |
+
+### Raw commands (direct — use only when you need precision)
+
+| Command | Purpose |
+|---------|---------|
+| `dom.click` | Same pipeline as human.click (this IS the human pipeline) |
+| `dom.type` | Direct text insertion, no per-character timing |
+| `dom.keyPress` | Single key press (`Enter`, `Tab`, `Escape`, etc.) |
+| `dom.keyDown` / `dom.keyUp` | Hold/release keys (for shortcuts like Ctrl+A) |
+| `dom.scroll` | Direct scroll with exact pixel amount |
+| `dom.focus` | Focus an element without clicking |
+| `dom.setValue` | Set input value directly (for hidden fields, React state) |
+
+### The avoid parameter
+
+All human commands accept `avoid` — rules for elements that should never be interacted with:
+
+```json
+{
+  "avoid": {
+    "selectors": [".cookie-banner", "#popup-overlay"],
+    "classes": ["sponsored", "ad-slot"],
+    "ids": ["newsletter-signup"],
+    "attributes": { "data-ad": "*", "data-tracking": "*" }
+  }
+}
+```
+
+If a human command returns `{ "clicked": false, "reason": "..." }`, the element was unsafe. Reasons include: `avoided`, `aria-hidden`, `no-offsetParent`, `honeypot-class`, `opacity-zero`, `visibility-hidden`, `sub-pixel`, `no-bounding-box`, `element-disappeared`, `element-shifted`. **Respect these. Do not retry the same element.**
+
+## Navigation
+
+### Going to a page
 
 ```json
 { "id": "1", "action": "tabs.navigate", "params": { "url": "https://example.com" } }
 ```
 
-### Find Element
+Then **wait for the page to load**:
 
 ```json
-{ "id": "2", "action": "dom.querySelector", "params": { "selector": "button[type='submit']" } }
+{ "id": "2", "action": "dom.waitForSelector", "params": { "selector": "body", "timeout": 10000 } }
 ```
 
-### Human Click With Avoid
+Better: wait for a specific element you expect on that page, not just `body`.
+
+### SPA navigation (clicking links instead of URL changes)
+
+Many modern sites are single-page apps. Clicking a nav link doesn't trigger a full page load — it swaps content in-place. After clicking a link:
+
+1. Wait for expected content: `dom.waitForSelector` with a selector unique to the destination
+2. Do NOT rely on `urlChanged` events alone — the URL may update before content renders
+3. If content doesn't appear within timeout, re-read the page with `dom.getHTML`
+
+### Tab management
 
 ```json
-{
-  "id": "3",
-  "action": "human.click",
-  "params": {
-    "selector": "button[type='submit']",
-    "avoid": {
-      "classes": ["sponsored", "ad-slot"],
-      "selectors": [".popup-close"],
-      "ids": ["tracking-only"],
-      "attributes": { "data-honeypot": "*" }
-    }
-  }
-}
+{ "id": "1", "action": "tabs.list", "params": {} }
+{ "id": "2", "action": "tabs.create", "params": { "url": "https://example.com" } }
+{ "id": "3", "action": "tabs.activate", "params": {}, "tabId": 456 }
+{ "id": "4", "action": "tabs.close", "params": {}, "tabId": 456 }
 ```
 
-### Human Type
+Always `tabs.list` first to get the `tabId` you need. Commands sent without `tabId` go to the active tab.
+
+## Recipes
+
+### Recipe: Fill and submit a search form
+
+```
+1. dom.getHTML                                    → find the search input selector
+2. human.click    { selector: "#search-input" }   → focus the input
+3. human.type     { text: "my query" }            → type the search
+4. dom.keyPress   { key: "Enter" }                → submit
+5. dom.waitForSelector { selector: ".results" }   → wait for results
+6. dom.getHTML                                    → read results
+```
+
+### Recipe: Scroll through a list and collect items
+
+```
+1. dom.findScrollable                             → find scrollable panels
+2. dom.getHTML                                    → read initial content
+3. human.scroll   { handleId: "el_7", direction: "down" }  → scroll down
+4. sleep 1-2s                                     → let content render
+5. dom.getHTML                                    → read new content
+6. Repeat 3-5 until you have enough or scroll stops moving
+```
+
+Use `dom.scroll` return values (`before`, `after`) to detect when you've hit the bottom: if `before === after`, there's nothing more to scroll.
+
+### Recipe: Navigate a multi-page flow (e.g., checkout, wizard)
+
+```
+1. dom.getHTML                                    → understand current step
+2. Fill in fields (human.click → human.type for each)
+3. human.click    { selector: "button.next" }     → advance
+4. dom.waitForSelector { selector: ".step-2" }    → wait for next step
+5. dom.getHTML                                    → understand new step
+6. Repeat until done
+```
+
+### Recipe: Handle a login form
+
+```
+1. dom.getHTML                                    → find email/password fields
+2. human.click    { selector: "#email" }
+3. human.type     { text: "user@example.com" }
+4. human.click    { selector: "#password" }
+5. human.type     { text: "password123" }
+6. human.click    { selector: "button[type='submit']" }
+7. dom.waitForSelector { selector: ".dashboard" } → wait for post-login page
+```
+
+If the site uses 2FA or CAPTCHA, you'll need to detect that from the DOM and handle accordingly.
+
+### Recipe: Extract data from a detail page
+
+```
+1. dom.getHTML                                    → get full page HTML
+2. Parse the HTML to find the data you need
+3. If data is in specific elements:
+   dom.queryAllInfo  { selector: ".product-card" }   → get handles + text summary
+   dom.elementHTML   { handleId: "el_3" }            → get full HTML of one card
+4. If data requires page JS globals (rare):
+   dom.evaluate      { fn: "() => window.__DATA__" } → may fail on strict CSP sites
+```
+
+Prefer `dom.getHTML` + `dom.elementHTML` over `dom.evaluate`. They work on all sites regardless of CSP.
+
+## Waiting
+
+**This is the #1 source of failures.** Pages don't load instantly. SPAs swap content asynchronously. After every navigation or interaction that changes the page:
+
+- **Use `dom.waitForSelector`** with a selector you expect to appear
+- **Set a reasonable timeout** (5000-10000ms for navigation, 3000ms for in-page changes)
+- **If the wait times out**, don't retry blindly — re-read the page with `dom.getHTML` to understand what actually happened
 
 ```json
-{ "id": "4", "action": "human.type", "params": { "text": "query text" } }
+{ "id": "1", "action": "dom.waitForSelector", "params": { "selector": ".results-loaded", "timeout": 8000 } }
 ```
 
-### Read Result
+Do NOT use fixed sleeps as a substitute for `waitForSelector`. Fixed sleeps are for behavioral pacing (looking human), not for waiting on page state.
 
-```json
-{ "id": "5", "action": "dom.evaluate", "params": { "fn": "() => document.title", "args": [] } }
+## Recovery
+
+Things go wrong. Handles go stale, pages redirect, elements disappear.
+
+### Stale handle
+
+If a command returns an error about an invalid handleId, the element was garbage-collected or the page navigated. **Re-query the selector:**
+
+```
+1. dom.querySelector { selector: "the-same-selector" }  → get fresh handleId
+2. Retry your action with the new handleId
 ```
 
-## Output Expectations For Subagents
+### Unexpected page
 
-- Report actions performed in order.
-- Report blocked interactions with exact `reason` values.
-- Report final URL and extraction results.
-- Report retries/fallbacks used.
+If after clicking you end up somewhere unexpected:
+1. Check the URL: `dom.getHTML` returns `url` in its result
+2. If wrong page: `tabs.navigate` back, or click the browser back button via `dom.evaluate`
+3. If a popup/modal appeared: look for a close button, click it, then retry
 
-## CSP (Content Security Policy) Guidance
+### Element blocked
 
-### Understanding CSP in This Framework
+If `human.click` returns `{ clicked: false }`:
+- `reason: "avoided"` — your avoid rules blocked it. Check if the rules are too aggressive.
+- `reason: "no-offsetParent"` or `sub-pixel` — element is hidden or off-screen. Scroll first.
+- `reason: "honeypot-class"` — genuine trap. Do not click.
+- `reason: "element-disappeared"` — re-query and retry.
+- `reason: "element-shifted"` — page was still loading. Wait, then retry.
 
-The Human Browser runs in a Chrome extension with two JavaScript execution contexts:
+### Timeout
 
-**ISOLATED World** (Content Script) - Always available, CSP-safe:
-- Full DOM access (`querySelector`, `getHTML`, etc.)
-- Human interactions (`human.click`, `human.type`, `human.scroll`)
-- Safe for ALL websites regardless of CSP
+If a command times out (30s default), the extension may be disconnected or the page is unresponsive.
+1. Try `tabs.list` — if it works, the extension is alive
+2. Try targeting a different tab or reloading: `tabs.reload`
+3. If nothing responds, the server or extension may need restart
 
-**MAIN World** (Page Context) - CSP-restricted:
-- Access to page globals (`window.__INITIAL_STATE__`)
-- May fail on sites with strict CSP (`script-src 'self'`)
-- Automatically falls back to ISOLATED on failure
+## Selector Strategy
 
-### CSP-Safe Operations (Always Work)
+**Never guess selectors.** Always derive them from what you see in `dom.getHTML` or `dom.discoverElements`.
 
-These commands work on **all sites**, including CSP-strict ones:
+Good selector sources (most to least stable):
+1. **IDs**: `#login-form` — unique, stable
+2. **Data attributes**: `[data-testid="submit"]`, `[aria-label="Search"]` — designed for automation
+3. **Semantic HTML**: `button[type="submit"]`, `input[name="email"]`, `nav a[href="/about"]`
+4. **Role attributes**: `[role="dialog"]`, `[role="navigation"]`
+5. **Structural**: `.header > nav > ul > li:first-child a` — fragile, use as last resort
 
-| Command | Use Case |
-|---------|----------|
-| `dom.getHTML` | Get full page HTML |
-| `dom.querySelector` / `dom.querySelectorAll` | Find elements |
-| `dom.discoverElements` | List all interactive elements |
-| `human.click` | Click elements safely |
-| `human.type` | Type text human-like |
-| `human.scroll` | Scroll pages/panels |
-| `page.content()` | Get page HTML (uses `dom.getHTML`) |
+Bad selectors (avoid these):
+- Hashed class names (`.css-1a2b3c`, `.sc-bZQynM`) — change every build
+- Deep structural paths — break on any DOM change
+- Guessed/assumed selectors you haven't verified in the actual HTML
 
-### When CSP Errors Appear
+### When you can't find a good selector
 
-**CSP errors in the DevTools console are harmless and expected.**
+Use `dom.discoverElements` — it returns interactive elements with their labels, roles, and types. Pick from that list. Or use `dom.queryAllInfo` with a broad selector (like `button` or `a`) and filter by the `text` or `label` field.
 
-Sites with strict CSP will show errors like:
-```
-EvalError: Evaluating a string as JavaScript violates CSP
-```
+## CSP Compatibility
 
-**This is NOT a problem:**
-- Sites cannot detect these client-side errors
-- Fallback mechanisms activate automatically
-- Normal browsers also show these errors on CSP sites
-- No server-side detection possible
+The extension runs in Chrome's ISOLATED world (content script context). Most commands are immune to Content Security Policy restrictions.
 
-### Anti-Detection Advantage
+**Always works (CSP-safe):** `dom.getHTML`, `dom.querySelector*`, `dom.queryAllInfo`, `dom.elementHTML`, `dom.findScrollable`, `dom.discoverElements`, `human.*`, `tabs.*`, `cookies.*`, `frames.list`
 
-Unlike Puppeteer/Playwright (CDP-based), this extension:
+**May fail on strict-CSP sites:** `dom.evaluate`, `dom.elementEvaluate` — these try MAIN world first, fall back to ISOLATED. When falling back, they can access the DOM but NOT page JavaScript globals.
 
-| Detection Method | CDP | Extension |
-|------------------|-----|-----------|
-| Remote debugging port | Exposed (9222) | None |
-| `navigator.webdriver` | `true` | Undefined |
-| Chrome APIs | Missing | Present |
-| CSP console errors | Visible | Same as normal browsing |
+If you need page globals (`window.__INITIAL_STATE__`) and the site has strict CSP, that data is not accessible. Extract from the rendered DOM instead.
 
-### Best Practices
-
-1. **Prefer ISOLATED world** - Use `dom.getHTML`, `querySelector`, `human.*` for most operations
-2. **Extract from rendered DOM** - After clicking/scrolling, read the HTML that was rendered
-3. **Use data attributes** - Sites often store data in `data-*` attributes (stable across redesigns)
-4. **Ignore CSP errors** - They're invisible to server-side detection
-5. **Use MAIN world only when needed** - Only for accessing page JavaScript globals
-
-### Example: CSP-Safe Data Extraction
-
-```javascript
-// [YES] CSP-safe: Extract from rendered DOM
-const jobs = await page.evaluate(() => {
-  const cards = document.querySelectorAll('[data-view-name="job-card"]');
-  return Array.from(cards).map(card => ({
-    title: card.querySelector('h3')?.textContent,
-    company: card.querySelector('.company')?.textContent,
-    // Read from data attributes (very stable)
-    jobId: card.getAttribute('data-job-id')
-  }));
-});
-
-// [WARN] CSP-restricted: Access page globals (may fail on strict CSP)
-const state = await page.evaluate(() => {
-  return window.__INITIAL_STATE__; // Requires MAIN world
-});
-```
+CSP errors in the browser console are harmless — sites cannot detect them.
 
 ## Do Not
 
-- Do not depend on Puppeteer/Playwright/CDP APIs.
-- Do not bypass human safety checks by default.
-- Do not assume one selector works across all pages without fallback.
-- Do not worry about CSP console errors - they are harmless to detection.
+- Do not guess selectors — always look at the page first
+- Do not skip waiting after navigation — pages need time to render
+- Do not retry a blocked click without understanding the reason
+- Do not use `dom.evaluate` when `dom.getHTML` or `dom.elementHTML` would work
+- Do not send commands without a `tabId` unless you're sure which tab is active
+- Do not treat `human.click` returning `{ clicked: false }` as an error to force through — it's the extension protecting you

@@ -1,6 +1,9 @@
 module.exports = {
-  // Path to Any Chromium based Binary, Tested with Chrome, Chromium and Helium
-  browser: "/Applications/Chromium.app/Contents/MacOS/Chromium",
+  // Path to any Chromium-based binary (Chrome, Chromium, Brave, Helium, etc.)
+  browser: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+
+  // Spoof user agent — match your real browser to avoid fingerprint mismatches
+  // userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
 
   // Where to store the browser profile (bookmarks, cookies, extensions state)
   // ~ expands to home directory
@@ -33,8 +36,16 @@ module.exports = {
       cleanupIntervalMs: 60 * 1000,
     },
     debug: {
-      // Default cursor trail mode on each page load; can still be changed via dom.setDebug
-      enabled: true,
+      // Show cursor trail + bezier path on screen (toggle at runtime via dom.setDebug)
+      // cursor: true,
+
+      // Open Chrome DevTools Protocol port for chrome://inspect
+      // Lets you watch DOM, network, console while commands flow through WebSocket
+      // Off by default — adds the CDP fingerprint that automation detectors look for
+       //devtools: true,
+
+      // Log raw WebSocket traffic to debug_session.log in project root
+       sessionLog: true,
     },
   },
 
@@ -49,26 +60,26 @@ module.exports = {
     },
 
     click: {
-      thinkDelayMin: 200, // ms pause after cursor arrives, before clicking
-      thinkDelayMax: 500,
+      thinkDelayMin: 150, // ms pause after cursor arrives, before clicking
+      thinkDelayMax: 400,
       maxShiftPx: 50, // abort click if element moves more than this during think time
     },
 
     type: {
-      baseDelayMin: 100, // ms per character
-      baseDelayMax: 250,
-      variance: 30, // +/- ms jitter per character
-      pauseChance: 0.15, // probability of a thinking pause between characters
-      pauseMin: 200, // thinking pause range
+      baseDelayMin: 80, // ms per character
+      baseDelayMax: 180,
+      variance: 25, // +/- ms jitter per character
+      pauseChance: 0.12, // probability of a thinking pause between characters
+      pauseMin: 150, // thinking pause range
       pauseMax: 400,
     },
 
     scroll: {
-      amountMin: 200, // px per scroll action
-      amountMax: 500,
+      amountMin: 250, // px per scroll action
+      amountMax: 550,
       backScrollChance: 0.1, // probability of a small scroll-back for realism
-      backScrollMin: 10,
-      backScrollMax: 50,
+      backScrollMin: 15,
+      backScrollMax: 60,
     },
   },
 };
