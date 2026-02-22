@@ -1,5 +1,5 @@
 {
-  "name": "webpilot",
+  "name": "h17-webpilot",
   "version": "0.1.0",
   "description": "CDP-free browser automation with human-like behavior via Chrome extension + WebSocket",
   "main": "index.js",
