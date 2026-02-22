@@ -7,7 +7,7 @@ Control Chromium through a WebSocket protocol. Any language can connect. Built-i
 ## Install
 
 ```bash
-npm install webpilot
+npm install h17-webpilot
 ```
 
 ## Quick Start
@@ -33,7 +33,7 @@ module.exports = {
 ### 2. Start
 
 ```bash
-npx webpilot start
+npx h17-webpilot start
 ```
 
 ### 3. Connect
