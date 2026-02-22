@@ -7,7 +7,7 @@ Control Chromium through a WebSocket protocol. Any language can connect. Built-i
 ## Install
 
 ```bash
-npm install webpilot
+npm install h17-webpilot
 ```
 
 ## Quick Start
@@ -15,7 +15,7 @@ npm install webpilot
 ### 1. Configure
 
 ```bash
-cp node_modules/webpilot/human-browser.config.example.js human-browser.config.js
+cp node_modules/h17-webpilot/human-browser.config.example.js human-browser.config.js
 ```
 
 Edit `human-browser.config.js` — set your browser path:
@@ -55,7 +55,7 @@ wp> ss
 #### Node.js (programmatic)
 
 ```javascript
-const { startWithPage } = require('webpilot');
+const { startWithPage } = require('h17-webpilot');
 
 const { page } = await startWithPage();
 await page.goto('https://example.com');
@@ -122,7 +122,7 @@ const {
   BridgeElement,   // DOM element wrapper
   BridgeKeyboard,  // Keyboard input
   BridgeCursor,    // Mouse cursor with bezier movement
-} = require('webpilot');
+} = require('h17-webpilot');
 ```
 
 ## Architecture
