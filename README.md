@@ -33,7 +33,7 @@ module.exports = {
 ### 2. Start
 
 ```bash
-npx webpilot start
+npx h17-webpilot start
 ```
 
 ### 3. Connect
