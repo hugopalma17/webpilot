@@ -58,7 +58,7 @@ const protocolActions = [
 const shorthands = [
   'go', 'click', 'type', 'sd', 'su', 'q', 'wait', 'eval', 'js',
   'title', 'url', 'html', 'ss', 'screenshot', 'reload', 'back',
-  'forward', 'clear', 'focus', 'key', 'discover', 'cookies', 'box',
+  'forward', 'clear', 'key', 'discover', 'cookies', 'box',
   'frames',
 ];
 
@@ -81,6 +81,15 @@ function out(msg) {
   } else {
     console.log(msg);
   }
+}
+
+let oneshotFired = false;
+function oneshotDone() {
+  if (!oneshot || oneshotFired) return;
+  oneshotFired = true;
+  // Close connection — Node exits naturally once event loop drains (stdout flushes)
+  // Keep oneshot=true so conn.on('close') doesn't print [disconnected]
+  if (conn) { conn.close(); conn = null; }
 }
 
 // --- Tab alias helpers ---
@@ -127,12 +136,13 @@ function sendAndWait(action, params) {
     }
 
     // Timeout after 35s
-    setTimeout(() => {
+    const t = setTimeout(() => {
       if (pending.has(id)) {
         pending.delete(id);
         reject(new Error('timeout'));
       }
     }, 35000);
+    t.unref();
   });
 }
 
@@ -153,12 +163,13 @@ function sendCommand(action, params) {
   out(`${C.dim}-> ${action}${C.reset}`);
 
   // Timeout
-  setTimeout(() => {
+  const t = setTimeout(() => {
     if (pending.has(id)) {
       pending.delete(id);
       out(`${C.red}timeout${C.reset} (35s)`);
     }
   }, 35000);
+  t.unref();
 }
 
 function sendRawJSON(raw) {
@@ -182,12 +193,13 @@ function sendRawJSON(raw) {
 
   out(`${C.dim}-> ${action}${C.reset}`);
 
-  setTimeout(() => {
+  const t = setTimeout(() => {
     if (pending.has(msg.id)) {
       pending.delete(msg.id);
       out(`${C.red}timeout${C.reset} (35s)`);
     }
   }, 35000);
+  t.unref();
 }
 
 // --- Response/event formatting ---
@@ -209,6 +221,7 @@ function onMessage(data) {
     } else {
       // Fire-and-forget (sendCommand)
       printResponse(msg, req.action);
+      oneshotDone();
     }
     return;
   }
@@ -345,6 +358,7 @@ async function doQuery(selector) {
     const result = await sendAndWait('dom.queryAllInfo', { selector });
     if (!Array.isArray(result) || result.length === 0) {
       out(`${C.dim}(no matches)${C.reset}`);
+      oneshotDone();
       return;
     }
     out(`${C.bold}${result.length} match(es)${C.reset}`);
@@ -354,6 +368,7 @@ async function doQuery(selector) {
   } catch (e) {
     out(`${C.red}error:${C.reset} ${e.message}`);
   }
+  oneshotDone();
 }
 
 // --- Cookie loader ---
@@ -502,12 +517,6 @@ function tryShorthand(line) {
       return true;
     }
 
-    case 'focus': {
-      if (!rest) { out(`${C.dim}usage: focus <selector>${C.reset}`); return true; }
-      sendCommand('dom.focus', { selector: rest });
-      return true;
-    }
-
     case 'key': case 'press': {
       if (!rest) { out(`${C.dim}usage: key <keyname>${C.reset}`); return true; }
       sendCommand('dom.keyPress', { key: rest });
@@ -564,7 +573,6 @@ function dotCommand(line) {
       out('  click <sel|handle>   human click');
       out('  type [sel] <text>    human type (sel: # . [ auto-detected)');
       out('  clear <sel>          clear input');
-      out('  focus <sel>          focus element');
       out('  key <name>           keyPress (Enter, Tab, Escape...)');
       out('');
       out(`${C.bold}Inspect${C.reset}`);
@@ -586,6 +594,7 @@ function dotCommand(line) {
       out('  action.name {json}   full protocol command');
       out('  {raw json}           raw WebSocket message');
       out('');
+      oneshotDone();
       break;
 
     case '.quit': case '.exit':
@@ -648,16 +657,19 @@ function dotCommand(line) {
     case '.events':
       showEvents = !showEvents;
       out(`events ${showEvents ? `${C.green}on${C.reset}` : `${C.dim}off${C.reset}`}`);
+      oneshotDone();
       break;
 
     case '.status':
       out(`connected: ${C.green}yes${C.reset}`);
       out(activeTab ? `tab:       ${activeTab}` : `tab:       ${C.dim}(default)${C.reset}`);
       out(`events:    ${showEvents ? `${C.green}on${C.reset}` : `${C.dim}off${C.reset}`}`);
+      oneshotDone();
       break;
 
     default:
       out(`${C.red}unknown: ${cmd}${C.reset} ${C.dim}(try .help)${C.reset}`);
+      oneshotDone();
   }
 }
 
@@ -788,11 +800,12 @@ function main() {
     if (cmd) {
       oneshot = true;
       dispatch(cmd);
-      // Give time for response, then exit
-      setTimeout(() => {
+      // Fallback timeout — normally exits via oneshotDone()
+      const fallback = setTimeout(() => {
         conn.close();
         process.exit(0);
       }, 36000);
+      fallback.unref();
       return;
     }
 

@@ -1,6 +1,6 @@
 module.exports = {
   // Path to any Chromium-based binary (Chrome, Chromium, Brave, Helium, etc.)
-  browser: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  browser: "/Applications/Helium.app/Contents/MacOS/Helium",
 
   // Spoof user agent — match your real browser to avoid fingerprint mismatches
   // userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",

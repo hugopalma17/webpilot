@@ -1139,7 +1139,12 @@ async function actionHumanType(params) {
   if (avoidResult.avoided)
     return { typed: false, reason: "avoided", rule: avoidResult.rule };
 
-  if (target !== document.activeElement) target.focus();
+  // If targeting a specific element, use human.click to move cursor + focus
+  if ((handleId || selector) && target !== document.activeElement) {
+    const clickResult = await actionHumanClick(params);
+    if (!clickResult.clicked)
+      return { typed: false, reason: clickResult.reason, detail: clickResult.detail };
+  }
 
   // Tokenize: split text into regular chars and {SpecialKey} tokens
   const tokens = [];
@@ -1477,19 +1482,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             const ox = style.overflow;
             if (oy === 'visible' && ox === 'visible') continue; // skip non-scrollable
             const hid = storeHandle(el);
-              scrollables.push({
-                handleId: hid,
-                tag: el.tagName.toLowerCase(),
-                id: el.id || null,
-                cls: [...el.classList].slice(0, 3).join(' ') || null,
-                overflowY: oy,
-                overflow: ox,
-                scrollHeight: el.scrollHeight,
-                clientHeight: el.clientHeight,
-                children: el.children.length,
-                text: (el.textContent || '').trim().slice(0, 80),
-              });
-            }
+            scrollables.push({
+              handleId: hid,
+              tag: el.tagName.toLowerCase(),
+              id: el.id || null,
+              cls: [...el.classList].slice(0, 3).join(' ') || null,
+              overflowY: oy,
+              overflow: ox,
+              scrollHeight: el.scrollHeight,
+              clientHeight: el.clientHeight,
+              children: el.children.length,
+              text: (el.textContent || '').trim().slice(0, 80),
+            });
           }
         }
         sendResponse({ result: scrollables });

@@ -21,8 +21,11 @@ try {
   if (pids.length)
     console.log(`[test] Killed stale server process(es): ${pids.join(", ")}`);
 } catch {}
+// Only kill stale Helium instances, never Chrome
 try {
-  execSync(`pkill -9 -f ${config.browser} 2>/dev/null`, { stdio: "ignore" });
+  if (config.browser && config.browser.includes('Helium')) {
+    execSync(`pkill -9 -f Helium 2>/dev/null`, { stdio: "ignore" });
+  }
 } catch {}
 
 const { startWithPage, killBrowserAndExit } = require("../index");

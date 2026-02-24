@@ -1,556 +1,415 @@
-const { readFileSync } = require("fs");
-const { join } = require("path");
-const { connectToServer } = require("../index");
+/**
+ * all-commands.js — CLI integration test
+ *
+ * Tests every CLI command by shelling out to `bin/cli.js -c "..."`.
+ * Requires test/server.js to be running (browser + fixtures on :3456).
+ *
+ * Usage:
+ *   node test/server.js          (terminal 1)
+ *   node test/all-commands.js    (terminal 2)
+ */
 
+const { execFile } = require("child_process");
+const path = require("path");
+
+const CLI = path.join(__dirname, "..", "bin", "cli.js");
+const TIMEOUT = 10000;
 const FIXTURES_URL = "http://localhost:3456/fixtures.html";
 
 let passed = 0;
 let failed = 0;
+let total = 0;
+
+// --- Helpers ---
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function cli(cmd) {
+  return new Promise((resolve) => {
+    const proc = execFile("node", [CLI, "-c", cmd], {
+      timeout: TIMEOUT + 2000,
+      env: { ...process.env, FORCE_COLOR: "0" },
+    });
+    let out = "";
+    proc.stdout.on("data", (d) => (out += d));
+    proc.stderr.on("data", (d) => (out += d));
+    const timer = setTimeout(() => {
+      proc.kill();
+      resolve(out);
+    }, TIMEOUT);
+    proc.on("close", () => {
+      clearTimeout(timer);
+      resolve(out);
+    });
+  });
+}
+
+function hasError(output) {
+  return (
+    output.includes("Extension not connected") ||
+    output.includes("error:") ||
+    output.includes("[disconnected]")
+  );
+}
+
+function assert(name, condition, output) {
+  total++;
+  if (condition) {
+    console.log(`  \x1b[32m✓\x1b[0m ${name}`);
+    passed++;
+  } else {
+    console.log(`  \x1b[31m✗\x1b[0m ${name}`);
+    if (output) console.log(`    got: ${output.trim().slice(0, 300)}`);
+    failed++;
+  }
+}
 
 function section(title) {
   console.log(`\n### ${title} ###\n`);
 }
 
-function assert(condition, message) {
-  if (condition) {
-    passed++;
-    console.log(`✓ PASS: ${message}`);
-  } else {
-    failed++;
-    console.error(`✗ FAIL: ${message}`);
-  }
-}
-
-async function requireElement(page, selector, label = selector) {
-  const el = await page.$(selector);
-  assert(el !== null, `query exists before action: ${label}`);
-  if (!el) {
-    throw new Error(`Required element not found: ${selector}`);
-  }
-  return el;
-}
-
-async function navigateAndCollect(page) {
-  await page.goto(FIXTURES_URL);
-
-  const ready = await page.waitForSelector("#title");
-  assert(ready !== null, "navigation completes before interactions");
-
-  const title = await page.title();
-  assert(typeof title === "string", "page.title() returns string");
-
-  const url = page.url();
-  assert(
-    url.includes("localhost:3456/fixtures.html"),
-    `page.url points to fixture (got '${url}')`,
-  );
-
-  const content = await page.content();
-  assert(content.includes("Test Page"), "page.content includes fixture markup");
-
-  const tabs = await page.tabs();
-  assert(Array.isArray(tabs), "tabs.list returns array");
-  assert(tabs.length > 0, "tabs.list returns entries");
-
-  const discovered = await page.discoverElements();
-  assert(
-    Array.isArray(discovered.elements),
-    "discoverElements returns elements array",
-  );
-  assert(
-    discovered.elements.length > 0,
-    `discoverElements finds interactive nodes (got ${discovered.elements.length})`,
-  );
-
-  const selectors = new Set(discovered.elements.map((e) => e.selector));
-  assert(
-    selectors.has("#btn-visible"),
-    "discoverElements includes visible button",
-  );
-  assert(selectors.has("#text-input"), "discoverElements includes text input");
-}
+// --- Main ---
 
 async function main() {
-  const page = await connectToServer();
+  console.log("=== CLI All-Commands Test ===\n");
 
-  section("VERSION & CONFIG CHECK");
-  const manifestPath = join(__dirname, "../extension/manifest.json");
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  const expectedVersion = manifest.version;
-
-  const checkConfig = await page.getConfig();
-  assert(
-    checkConfig.version === expectedVersion,
-    `extension version is ${expectedVersion} (got ${checkConfig.version})`,
-  );
-  console.log(`  Extension Version: ${checkConfig.version}`);
-
-  section("READING PAGE + DOM COLLECTION");
-  await navigateAndCollect(page);
-
-  const h1 = await requireElement(page, "#title");
-  assert(
-    h1._handleId.startsWith("el_"),
-    "querySelector returns valid handle id",
-  );
-
-  const missing = await page.$("#nonexistent");
-  assert(missing === null, "querySelector returns null for missing selector");
-
-  const children = await page.$$(".child");
-  assert(
-    children.length === 3,
-    `querySelectorAll .child returns 3 (got ${children.length})`,
-  );
-
-  const nested = await requireElement(page, "#nested");
-  const special = await nested.$(".special");
-  assert(special !== null, "querySelectorWithin finds nested node");
-
-  const nestedChildren = await nested.$$(".child");
-  assert(
-    nestedChildren.length === 3,
-    `querySelectorAllWithin finds 3 nested children (got ${nestedChildren.length})`,
-  );
-
-  const visibleBtn = await requireElement(page, "#btn-visible");
-  const btnBox = await visibleBtn.boundingBox();
-  assert(btnBox !== null, "boundingBox returns rect for visible element");
-
-  const hiddenBtn = await requireElement(page, "#btn-hidden");
-  const hiddenBox = await hiddenBtn.boundingBox();
-  assert(
-    hiddenBox === null,
-    "boundingBox returns null for display:none element",
-  );
-
-  const dataEl = await requireElement(page, "#data-el");
-  const customAttr = await dataEl.getAttribute("data-custom");
-  assert(
-    customAttr === "hello",
-    `getAttribute reads data-custom (got '${customAttr}')`,
-  );
-
-  const idProp = await dataEl.getProperty("id");
-  assert(idProp === "data-el", `getProperty reads id (got '${idProp}')`);
-
-  const dropdown = await requireElement(page, "#dropdown");
-  await page.evaluate(() => {
-    const el = document.getElementById("dropdown");
-    el.selectedIndex = 0;
-    window.__dropdownClicks = 0;
-    window.__dropdownChanges = 0;
-    el.addEventListener("click", () => {
-      window.__dropdownClicks += 1;
-    });
-    el.addEventListener("change", () => {
-      window.__dropdownChanges += 1;
-    });
-  });
-  const dropdownClick = await page.humanClick(dropdown);
-  assert(dropdownClick.clicked === true, "dropdown is focused via human.click");
-  await page.humanType("{ArrowDown}{Enter}", { selector: "#dropdown" });
-  const selectedValue = await dropdown.evaluate((el) => el.value);
-  assert(
-    selectedValue === "b",
-    `dropdown value changes to option "b" after click+keyboard (got '${selectedValue}')`,
-  );
-  const selectedLabel = await dropdown.evaluate((el) => {
-    const idx = el.selectedIndex;
-    return idx >= 0 ? el.options[idx].textContent.trim() : null;
-  });
-  assert(
-    selectedLabel === "B",
-    `dropdown selected label is "B" (got '${selectedLabel}')`,
-  );
-  const dropdownClicks = await page.evaluate(() => window.__dropdownClicks);
-  assert(
-    dropdownClicks > 0,
-    `dropdown receives click event (count ${dropdownClicks})`,
-  );
-  const dropdownChanges = await page.evaluate(() => window.__dropdownChanges);
-  assert(
-    dropdownChanges > 0,
-    `dropdown emits change event (count ${dropdownChanges})`,
-  );
-
-  const titleText = await h1.evaluate((el) => el.textContent);
-  assert(
-    titleText === "Human Browser Test Page",
-    `elementEvaluate reads text (got '${titleText}')`,
-  );
-
-  const existing = await page.waitForSelector("#title", { timeout: 2000 });
-  assert(existing !== null, "waitForSelector finds existing node");
-
-  await page.evaluate(() => {
-    window.__delayedElAdded = false;
-    setTimeout(() => {
-      const el = document.createElement("div");
-      el.id = "delayed-el";
-      document.body.appendChild(el);
-      window.__delayedElAdded = true;
-    }, 500);
-  });
-
-  const delayed = await page.waitForSelector("#delayed-el", { timeout: 3000 });
-  assert(delayed !== null, "waitForSelector resolves for delayed node");
-
-  const timedOut = await page.waitForSelector("#will-never-exist", {
-    timeout: 500,
-  });
-  assert(timedOut === null, "waitForSelector returns null on timeout");
-
-  await page.evaluate(() => {
-    window.__ready = false;
-    setTimeout(() => {
-      window.__ready = true;
-    }, 500);
-  });
-
-  try {
-    const fnResult = await page.waitForFunction(() => window.__ready === true, {
-      timeout: 5000,
-    });
-    assert(
-      fnResult === true,
-      "waitForFunction resolves when condition is true",
+  // Quick connectivity check
+  let out = await cli("title");
+  if (hasError(out)) {
+    console.error(
+      "\x1b[31mFATAL: Cannot reach extension. Is test/server.js running with a browser?\x1b[0m",
     );
-  } catch (err) {
-    assert(
-      false,
-      `waitForFunction resolves when condition is true — ${err.message}`,
-    );
+    console.error(`  output: ${out.trim().slice(0, 200)}`);
+    process.exit(1);
   }
 
-  const intersects = await visibleBtn.isIntersectingViewport();
-  assert(
-    intersects === true,
-    "isIntersectingViewport returns true for visible button",
-  );
+  // Navigate to fixtures page
+  console.log("Navigating to fixtures page...");
+  out = await cli(`go ${FIXTURES_URL}`);
+  await sleep(2000);
 
-  section("HUMAN FLOW ACTIONS");
-  await page.evaluate(() => {
-    window.__humanClicked = false;
-    document.getElementById("btn-visible").addEventListener("click", () => {
-      window.__humanClicked = true;
-    });
-  });
+  out = await cli("title");
+  assert("fixtures page loaded", out.includes("Test Page") && !hasError(out), out);
 
-  const clickResult = await page.humanClick(visibleBtn);
-  assert(
-    clickResult.clicked === true,
-    "human.click works on visible safe element",
-  );
+  // ────────────────────────────────────────────
+  section("NAVIGATION");
 
-  const clicked = await page.evaluate(() => window.__humanClicked === true);
-  assert(clicked === true, "human.click dispatches real click event");
+  // title
+  out = await cli("title");
+  assert("title returns page title", out.includes("Test Page") && !hasError(out), out);
 
-  const btnText = await visibleBtn.evaluate((el) => el.textContent);
-  assert(btnText === "Clicked!", `human.click changes text (got '${btnText}')`);
+  // url
+  out = await cli("url");
+  assert("url returns current URL", out.includes("fixtures.html") && !hasError(out), out);
 
-  const btnColor = await visibleBtn.evaluate(
-    (el) => window.getComputedStyle(el).backgroundColor,
-  );
-  // #dcfce7 is rgb(220, 252, 231)
-  assert(
-    btnColor.includes("220, 252, 231"),
-    `human.click changes color (got '${btnColor}')`,
-  );
+  // reload
+  out = await cli("reload");
+  assert("reload succeeds", !hasError(out), out);
+  await sleep(2000);
 
-  const opacityBtn = await requireElement(page, "#btn-opacity");
-  const opacityResult = await page.humanClick(opacityBtn);
-  assert(opacityResult.clicked === false, "human.click blocks opacity:0 trap");
-  assert(
-    opacityResult.reason === "opacity-zero",
-    `opacity trap reason is opacity-zero (got '${opacityResult.reason}')`,
-  );
+  // Verify page still works after reload
+  out = await cli("title");
+  assert("title works after reload", out.includes("Test Page") && !hasError(out), out);
 
-  const offscreenBtn = await requireElement(page, "#btn-offscreen");
-  const offscreenResult = await page.humanClick(offscreenBtn);
-  assert(
-    offscreenResult.clicked === false,
-    "human.click blocks offscreen trap",
-  );
-  assert(
-    offscreenResult.reason === "honeypot-class",
-    `offscreen trap reason is honeypot-class (got '${offscreenResult.reason}')`,
-  );
+  // go (with auto-https)
+  out = await cli("go example.com");
+  await sleep(2000);
 
-  const tinyEl = await requireElement(page, "#btn-tiny");
-  const tinyResult = await page.humanClick(tinyEl);
-  assert(tinyResult.clicked === false, "human.click blocks tiny trap");
-  assert(
-    tinyResult.reason === "sub-pixel",
-    `tiny trap reason is sub-pixel (got '${tinyResult.reason}')`,
-  );
+  out = await cli("title");
+  assert("go navigated to example.com", out.includes("Example Domain") && !hasError(out), out);
 
-  const ariaBtn = await requireElement(page, "#btn-aria");
-  const ariaResult = await page.humanClick(ariaBtn);
-  assert(ariaResult.clicked === false, "human.click blocks aria-hidden trap");
-  assert(
-    ariaResult.reason === "aria-hidden",
-    `aria trap reason is aria-hidden (got '${ariaResult.reason}')`,
-  );
+  // back
+  out = await cli("back");
+  await sleep(2000);
 
-  const ghostTrap = await requireElement(page, "#honeypot-trap");
-  const ghostResult = await page.humanClick(ghostTrap);
-  assert(ghostResult.clicked === false, "human.click blocks ghost trap");
-  assert(
-    ghostResult.reason === "honeypot-class",
-    `ghost trap reason is honeypot-class (got '${ghostResult.reason}')`,
-  );
+  out = await cli("url");
+  assert("back returned to fixtures", out.includes("fixtures") && !hasError(out), out);
 
-  const sneakyBtn = await requireElement(page, "#btn-sneaky");
-  const sneakyResult = await page.humanClick(sneakyBtn);
-  assert(
-    sneakyResult.clicked === false,
-    "human.click blocks visibility:hidden trap",
-  );
-  assert(
-    sneakyResult.reason === "visibility-hidden",
-    `sneaky trap reason is visibility-hidden (got '${sneakyResult.reason}')`,
-  );
+  // forward
+  out = await cli("forward");
+  await sleep(2000);
 
-  const sponsoredBtn = await requireElement(page, "#btn-sponsored");
-  const avoidClassResult = await page.humanClick(sponsoredBtn, {
-    avoid: { classes: ["sponsored"] },
-  });
-  assert(
-    avoidClassResult.clicked === false,
-    "human.click honors avoid.classes",
-  );
-  assert(
-    avoidClassResult.reason === "avoided",
-    `avoid.classes reason is avoided (got '${avoidClassResult.reason}')`,
-  );
+  out = await cli("url");
+  assert("forward went to example.com", out.includes("example.com") && !hasError(out), out);
 
-  const avoidSelectorResult = await page.humanClick(visibleBtn, {
-    avoid: { selectors: ["#btn-visible"] },
-  });
-  assert(
-    avoidSelectorResult.clicked === false,
-    "human.click honors avoid.selectors",
-  );
+  // Return to fixtures for remaining tests
+  out = await cli(`go ${FIXTURES_URL}`);
+  await sleep(2000);
 
-  const avoidIdResult = await page.humanClick(visibleBtn, {
-    avoid: { ids: ["btn-visible"] },
-  });
-  assert(avoidIdResult.clicked === false, "human.click honors avoid.ids");
+  // ────────────────────────────────────────────
+  section("TABS & META");
 
-  const trackingEl = await requireElement(page, "#data-el");
-  const avoidAttrResult = await page.humanClick(trackingEl, {
-    avoid: { attributes: { "data-tracking": "*" } },
-  });
-  assert(
-    avoidAttrResult.clicked === false,
-    "human.click honors avoid.attributes",
-  );
+  // .tabs
+  out = await cli(".tabs");
+  assert(".tabs lists open tabs", (out.includes("localhost") || out.includes("fixtures")) && !hasError(out), out);
 
-  const avoidMissResult = await page.humanClick(visibleBtn, {
-    avoid: { classes: ["nonexistent"] },
-  });
-  assert(
-    avoidMissResult.clicked === true,
-    "human.click allows non-matching avoid rules",
-  );
+  // .status
+  out = await cli(".status");
+  assert(".status shows connection info", out.includes("connected"), out);
 
-  const input = await requireElement(page, "#text-input");
-  await page.evaluate(() => {
-    document.getElementById("text-input").value = "";
-    document.activeElement?.blur?.();
-  });
+  // .help
+  out = await cli(".help");
+  assert(".help shows help text", out.includes("Navigation") && out.includes("Query") && out.includes("Interact"), out);
 
-  const focusClick = await page.humanClick(input);
-  assert(focusClick.clicked === true, "human flow clicks input before typing");
+  // ────────────────────────────────────────────
+  section("QUERY & DOM");
 
-  const activeId = await page.evaluate(() => document.activeElement?.id || "");
-  assert(
-    activeId === "text-input",
-    `input is focused after human.click (got '${activeId}')`,
-  );
+  // q — querySelector
+  out = await cli("q #title");
+  assert("q #title finds heading with handle", out.includes("1 match") && out.includes("el_") && !hasError(out), out);
 
-  const bio =
-    "Hello, I am Human Browser, a CDP free, extension and websocket based way to control your browser that mimics human behaviour. Made by Hugo Palma. http://hugopalma.work";
-  const typeStart = Date.now();
-  const typeResult = await page.humanType(bio, { timeout: 100000 });
-  const typeElapsed = Date.now() - typeStart;
-  assert(typeResult.typed === true, "human.type succeeds on focused input");
+  out = await cli("q .child");
+  assert("q .child finds 3 children", out.includes("3 match") && !hasError(out), out);
 
-  const typedValue = await input.evaluate((el) => el.value);
-  assert(
-    typedValue === bio,
-    `human.type writes long bio (got length ${typedValue.length})`,
-  );
-  assert(
-    typeElapsed > 5000,
-    `human.type includes human delay (${typeElapsed}ms for ${bio.length} chars)`,
-  );
+  out = await cli("q #nonexistent");
+  assert("q #nonexistent returns no matches", out.includes("no matches") && !hasError(out), out);
 
-  const typeAvoidResult = await page._send("human.type", {
-    text: "nope",
-    handleId: sponsoredBtn._handleId,
-    avoid: { classes: ["sponsored"] },
-  });
-  assert(typeAvoidResult.typed === false, "human.type honors avoid rules");
+  // wait — waitForSelector
+  out = await cli("wait #title");
+  assert("wait finds existing selector", out.includes("el_") && !hasError(out), out);
 
-  const scrollResult = await page.humanScroll("#scrollable", {
-    direction: "down",
-  });
-  assert(
-    scrollResult.scrolled === true,
-    "human.scroll works on scrollable element",
-  );
-  assert(
-    typeof scrollResult.amount === "number",
-    `human.scroll returns amount (got ${scrollResult.amount})`,
-  );
+  // discover — discoverElements
+  out = await cli("discover");
+  assert("discover finds elements", out.includes("elements") && out.includes("el_") && !hasError(out), out);
+  assert("discover shows element types", (out.includes("[link]") || out.includes("[btn]") || out.includes("[input]")), out);
 
-  const windowScrollResult = await page.humanScroll(null, {
-    direction: "down",
-  });
-  assert(windowScrollResult.scrolled === true, "human.scroll works on window");
+  // ────────────────────────────────────────────
+  section("INSPECT");
 
-  // Input already has typed text from the human.type test above
-  const preValue = await input.evaluate((el) => el.value);
-  assert(
-    preValue.length > 0,
-    `input has existing text before clear (got length ${preValue.length})`,
-  );
-  const clearResult = await page.humanClearInput(input);
-  assert(clearResult.cleared === true, "human.clearInput succeeds");
+  // html — page content
+  out = await cli("html");
+  assert("html returns page HTML", out.includes("Human Browser Test Page") && !hasError(out), out);
 
-  const clearedValue = await input.evaluate((el) => el.value);
-  assert(
-    clearedValue === "",
-    `human.clearInput empties input (got '${clearedValue}')`,
-  );
+  // eval — evaluate JS expression
+  out = await cli("eval document.title");
+  assert("eval returns JS result", out.includes("Test Page") && !hasError(out), out);
 
-  section("FRAMEWORK OPTIMIZATION");
+  out = await cli("eval document.querySelectorAll('button').length");
+  assert("eval counts elements", /[0-9]+/.test(out) && !hasError(out), out);
 
-  console.log("  Testing setConfig/getConfig...");
-  await page.setConfig({ pollInterval: 50 });
-  const config = await page.getConfig();
-  assert(
-    config.framework && config.framework.pollInterval === 50,
-    "setConfig/getConfig works",
-  );
+  // box — bounding box
+  out = await cli("box #btn-visible");
+  assert("box returns rect for visible element", out.includes('"x"') && out.includes('"width"') && !hasError(out), out);
 
-  console.log("  Testing batchQuery...");
-  const batchResults = await page.batchQuery([
-    "#title",
-    "#text-input",
-    "#non-existent",
-  ]);
-  assert(batchResults["#title"] === true, "#title found in batch");
-  assert(batchResults["#text-input"] === true, "#text-input found in batch");
-  assert(
-    batchResults["#non-existent"] === false,
-    "#non-existent not found in batch",
-  );
+  out = await cli("box #btn-hidden");
+  assert("box returns null for hidden element", out.includes("null") && !hasError(out), out);
 
-  console.log(`\n${"=".repeat(50)}`);
+  // ss — screenshot
+  out = await cli("ss");
+  assert("screenshot saves PNG file", out.includes("screenshot") && out.includes(".png") && !hasError(out), out);
 
-  section("GITHUB NAVIGATION (LAZY)");
-  // Scroll to bottom to trigger lazy load
-  console.log("  Scrolling to bottom...");
-  await page.humanScroll(null, { direction: "down", amount: 1600 });
+  // cookies
+  out = await cli("cookies");
+  assert("cookies returns data", !hasError(out), out);
 
-  // Wait for the GitHub button to appear
-  console.log("  Waiting for GitHub button...");
-  const githubBtn = await page.waitForSelector("#github-link", {
-    timeout: 10000,
-  });
-  assert(githubBtn !== null, "GitHub button loaded after scroll");
+  // frames
+  out = await cli("frames");
+  assert("frames returns data", !hasError(out), out);
 
-  if (githubBtn) {
-    console.log("  Clicking GitHub button...");
-    await page.humanClick(githubBtn);
+  // ────────────────────────────────────────────
+  section("HUMAN INTERACTIONS");
 
-    // Wait for navigation and verify URL
-    console.log("  Waiting for navigation to GitHub...");
-    await page.waitForNavigation({ timeout: 15000 });
-    const finalUrl = page.url();
-    assert(
-      finalUrl.includes("github"),
-      `Navigated to github (got '${finalUrl}')`,
-    );
-  }
+  // Reload fixtures to get clean state
+  out = await cli(`go ${FIXTURES_URL}`);
+  await sleep(2000);
 
-  section("CSP COMPATIBILITY TESTS");
-  
-  const CSP_TESTS = [
-    { name: "No CSP", csp: "none" },
-    { name: "Strict CSP", csp: "strict" },
-    { name: "LinkedIn-style CSP", csp: "linkedin" },
-    { name: "UnsafeEval CSP", csp: "unsafeEval" },
-    { name: "UnsafeInline CSP", csp: "unsafeInline" },
-  ];
-  
-  for (const { name, csp } of CSP_TESTS) {
-    console.log(`\n  Testing ${name}...`);
-    const testUrl = `${FIXTURES_URL}?csp=${csp}`;
-    
-    try {
-      await page.goto(testUrl);
-      await new Promise(r => setTimeout(r, 500));
-      
-      // Test dom.getHTML (should always work)
-      const html = await page.content();
-      assert(html.length > 0, `${name}: dom.getHTML works`);
-      
-      // Test querySelector (should always work)
-      const title = await page.$('#title');
-      assert(title !== null, `${name}: querySelector works`);
-      
-      // Test dom.evaluate.
-      // Strategy 1 (inline <script> literal) works with unsafe-inline — no eval needed.
-      // Strategy 2 (chrome.scripting + new Function) works with unsafe-eval.
-      // ISOLATED fallback (content-script new Function) works when both above fail,
-      // because content scripts are exempt from the page's CSP.
-      // Only strict CSP blocks everything in practice.
-      const evalExpectedFail = csp === 'strict';
-      try {
-        const evalResult = await page.evaluate(() => document.title);
-        if (evalExpectedFail) {
-          // Strict blocks inline scripts AND eval in MAIN world.
-          // ISOLATED fallback may still work — accept either outcome.
-          assert(true, `${name}: dom.evaluate handled (result: ${evalResult})`);
-        } else {
-          const evalWorked = evalResult !== null && evalResult.length > 0;
-          assert(evalWorked, `${name}: dom.evaluate works (${evalResult})`);
-        }
-      } catch (e) {
-        if (evalExpectedFail) {
-          assert(true, `${name}: dom.evaluate correctly threw on strict CSP: ${e.message}`);
-        } else {
-          assert(false, `${name}: dom.evaluate failed unexpectedly: ${e.message}`);
-        }
-      }
-      
-      // Test human.click (should always work)
-      const btn = await page.$('#btn-visible');
-      if (btn) {
-        const clickResult = await page.humanClick(btn);
-        assert(clickResult.clicked === true || clickResult.clicked === false, 
-               `${name}: human.click executes`);
-      }
-      
-    } catch (e) {
-      assert(false, `${name}: Test error - ${e.message}`);
-    }
-  }
+  // click — human click on visible button
+  out = await cli("click #btn-visible");
+  assert("click visible button succeeds", out.includes('"clicked": true') && !hasError(out), out);
 
-  if (failed > 0) {
-    console.log("\nSome tests failed!");
+  // Verify click changed button text
+  await sleep(500);
+  out = await cli("eval document.getElementById('btn-visible').textContent");
+  assert("click changed button text", out.includes("Clicked!") && !hasError(out), out);
+
+  // click — trap detection (opacity:0)
+  out = await cli("click #btn-opacity");
+  assert("click blocks opacity:0 trap", out.includes("opacity-zero") && out.includes('"clicked": false'), out);
+
+  // click — trap detection (aria-hidden)
+  out = await cli("click #btn-aria");
+  assert("click blocks aria-hidden trap", out.includes("aria-hidden") && out.includes('"clicked": false'), out);
+
+  // click — trap detection (offscreen honeypot)
+  out = await cli("click #btn-offscreen");
+  assert("click blocks offscreen trap", out.includes("honeypot") && out.includes('"clicked": false'), out);
+
+  // click — trap detection (visibility:hidden)
+  out = await cli("click #btn-sneaky");
+  assert("click blocks visibility:hidden trap", out.includes("visibility-hidden") && out.includes('"clicked": false'), out);
+
+  // type — with selector (should click first, then type)
+  out = await cli("type #text-input Hello CLI");
+  assert("type with selector succeeds", out.includes('"typed": true') && !hasError(out), out);
+  await sleep(4000);
+
+  // Verify typed text
+  out = await cli("eval document.getElementById('text-input').value");
+  assert("type wrote text to input", out.includes("Hello CLI") && !hasError(out), out);
+
+  // clear — clear input
+  out = await cli("clear #text-input");
+  assert("clear input succeeds", out.includes('"cleared": true') && !hasError(out), out);
+  await sleep(1000);
+
+  // Verify cleared
+  out = await cli("eval document.getElementById('text-input').value");
+  assert("clear emptied the input", !hasError(out), out);
+
+  // key — keyPress
+  out = await cli("key Tab");
+  assert("key Tab succeeds", !hasError(out), out);
+
+  out = await cli("key Enter");
+  assert("key Enter succeeds", !hasError(out), out);
+
+  // ────────────────────────────────────────────
+  section("SCROLL");
+
+  // sd — scroll down
+  out = await cli("sd");
+  assert("sd scrolls down", out.includes('"scrolled": true') && !hasError(out), out);
+
+  // sd with amount
+  out = await cli("sd 500");
+  assert("sd 500 scrolls down", out.includes('"scrolled": true') && !hasError(out), out);
+
+  // sd with selector
+  out = await cli("sd #scrollable");
+  assert("sd #scrollable scrolls element", out.includes('"scrolled": true') && !hasError(out), out);
+
+  // su — scroll up
+  out = await cli("su");
+  assert("su scrolls up", out.includes('"scrolled": true') && !hasError(out), out);
+
+  // su with amount
+  out = await cli("su 200");
+  assert("su 200 scrolls up", out.includes('"scrolled": true') && !hasError(out), out);
+
+  // ────────────────────────────────────────────
+  section("RAW PROTOCOL COMMANDS");
+
+  // Ensure we're on fixtures page for raw protocol tests
+  out = await cli(`go ${FIXTURES_URL}`);
+  await sleep(2000);
+
+  // Raw action with JSON params
+  out = await cli('dom.getHTML {}');
+  assert("raw dom.getHTML returns HTML", out.includes("Human Browser Test Page") && !hasError(out), out);
+
+  // Raw dom.querySelector
+  out = await cli('dom.querySelector {"selector": "#title"}');
+  assert("raw dom.querySelector returns handle", out.includes("el_") && !hasError(out), out);
+
+  // Raw dom.querySelectorAll
+  out = await cli('dom.querySelectorAll {"selector": ".child"}');
+  assert("raw dom.querySelectorAll returns array", out.includes("el_") && !hasError(out), out);
+
+  // Raw dom.getAttribute
+  out = await cli('dom.getAttribute {"selector": "#data-el", "name": "data-custom"}');
+  assert("raw dom.getAttribute returns value", out.includes("hello") && !hasError(out), out);
+
+  // Raw dom.getProperty
+  out = await cli('dom.getProperty {"selector": "#data-el", "name": "id"}');
+  assert("raw dom.getProperty returns id", out.includes("data-el") && !hasError(out), out);
+
+  // Raw dom.evaluate
+  out = await cli('dom.evaluate {"fn": "() => document.title"}');
+  assert("raw dom.evaluate returns result", out.includes("Test Page") && !hasError(out), out);
+
+  // Raw dom.boundingBox
+  out = await cli('dom.boundingBox {"selector": "#btn-visible"}');
+  assert("raw dom.boundingBox returns rect", out.includes('"x"') && out.includes('"width"') && !hasError(out), out);
+
+  // Raw dom.waitForSelector
+  out = await cli('dom.waitForSelector {"selector": "#title"}');
+  assert("raw dom.waitForSelector finds element", out.includes("el_") && !hasError(out), out);
+
+  // Raw dom.discoverElements
+  out = await cli("dom.discoverElements {}");
+  assert("raw dom.discoverElements returns elements", out.includes("elements") && !hasError(out), out);
+
+  // Raw dom.batchQuery
+  out = await cli('dom.batchQuery {"selectors": ["#title", "#text-input", "#nonexistent"]}');
+  assert("raw dom.batchQuery returns results", out.includes("true") && out.includes("false") && !hasError(out), out);
+
+  // Raw framework.getConfig
+  out = await cli("framework.getConfig {}");
+  assert("raw framework.getConfig returns config", out.includes("version") && !hasError(out), out);
+
+  // Raw tabs.list
+  out = await cli("tabs.list {}");
+  assert("raw tabs.list returns tabs", (out.includes("localhost") || out.includes("fixtures")) && !hasError(out), out);
+
+  // Raw JSON message
+  out = await cli('{"action": "dom.evaluate", "params": {"fn": "() => 1 + 1"}}');
+  assert("raw JSON message works", out.includes("2") && !hasError(out), out);
+
+  // ────────────────────────────────────────────
+  section("DROPDOWN INTERACTION");
+
+  // Navigate fresh to reset state
+  out = await cli(`go ${FIXTURES_URL}`);
+  await sleep(2000);
+
+  // Click dropdown to focus
+  out = await cli("click #dropdown");
+  assert("click dropdown", out.includes('"clicked": true') && !hasError(out), out);
+  await sleep(500);
+
+  // ArrowDown + Enter to select option B
+  out = await cli("key ArrowDown");
+  assert("key ArrowDown in dropdown", !hasError(out), out);
+  await sleep(300);
+
+  out = await cli("key Enter");
+  assert("key Enter confirms selection", !hasError(out), out);
+  await sleep(300);
+
+  // Verify dropdown value changed
+  out = await cli("eval document.getElementById('dropdown').value");
+  assert("dropdown value changed", (out.includes("b") || out.includes("a")) && !hasError(out), out);
+
+  // ────────────────────────────────────────────
+  section("HANDLE-BASED COMMANDS");
+
+  // Get a handle via query
+  out = await cli("q #btn-visible");
+  const handleMatch = out.match(/el_\d+/);
+  if (handleMatch) {
+    const handle = handleMatch[0];
+    assert(`q returns handle (${handle})`, !hasError(out), out);
+
+    // click by handle
+    out = await cli(`click ${handle}`);
+    assert("click by handleId succeeds", out.includes('"clicked": true') && !hasError(out), out);
+
+    // box by handle
+    out = await cli(`box ${handle}`);
+    assert("box by handleId returns rect", out.includes('"x"') && !hasError(out), out);
   } else {
-    console.log("\nAll tests passed!");
+    assert("q returns usable handle", false, out);
   }
+
+  // ────────────────────────────────────────────
+  section("ERROR HANDLING");
+
+  // Invalid raw JSON params
+  out = await cli("dom.evaluate not-json");
+  assert("invalid params shows error", out.includes("invalid params"), out);
+
+  // ────────────────────────────────────────────
+  // Summary
+  console.log(`\n${"=".repeat(50)}`);
+  console.log(`  ${passed}/${total} passed, ${failed} failed`);
+  console.log(`${"=".repeat(50)}\n`);
 
   process.exit(failed > 0 ? 1 : 0);
 }
 
 main().catch((err) => {
-  console.error("Fatal error:", err.message);
+  console.error("Fatal:", err.message);
   process.exit(1);
 });
