@@ -125,8 +125,8 @@ func resolveTab(input string) (int64, error) {
 	// Check alias map first (0-9 range)
 	tabMapMu.Lock()
 	defer tabMapMu.Unlock()
-	if n >= 0 && int(n) < len(tabMap) {
-		return int64(tabMap[n].ID), nil
+	if n >= 0 && n < int64(len(tabMap)) {
+		return int64(tabMap[int(n)].ID), nil
 	}
 
 	// Otherwise treat as raw Chrome tab ID
