@@ -1438,6 +1438,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ result: actionScroll(params) });
         return;
       case "dom.focus":
+        if (!debugMode) {
+          sendResponse({ error: "dom.focus requires debug mode (set framework.debug.cursor: true in config)" });
+          return;
+        }
         sendResponse({ result: actionFocus(params) });
         return;
       case "dom.setValue":

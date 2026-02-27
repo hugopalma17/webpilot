@@ -282,7 +282,8 @@ async function handleCommand(msg) {
       
       // ISOLATED world fallback — CSP-safe but limited to DOM access
       try {
-        return await forwardToContentScript(tabId, "dom.evaluateIsolated", params);
+        const isolatedResult = await forwardToContentScript(tabId, "dom.evaluateIsolated", params);
+        return { result: isolatedResult, warning: "Ran in isolated world (CSP restriction). Cannot access page JS globals." };
       } catch (isolatedErr) {
         throw new Error(
           `Evaluate failed in both MAIN and ISOLATED worlds. ` +
