@@ -3,6 +3,9 @@
 
 name: Node.js Package
 
+permissions:
+  contents: read
+
 on:
    registry_package:
      types:    updated
