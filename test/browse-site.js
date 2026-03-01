@@ -167,8 +167,8 @@ async function main() {
     const testValues = {
       name: 'Human Browser Bot',
       text: 'Human Browser Bot',
-      email: 'bot@human-browser.dev',
-      textarea: 'Hello from human-browser! This is an automated test of the contact form.',
+      email: 'webpilot@hugopalma.work',
+      textarea: 'Hello from human-browser WebPilot! This is an automated test of the contact form.',
     };
 
     console.log(`=== Filling ${inputs.length} input(s) ===`);
