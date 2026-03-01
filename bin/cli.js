@@ -718,90 +718,99 @@ function dispatch(line) {
 
 // --- Start subcommand ---
 
-async function startServer() {
-  // Resolve the framework entry point relative to this CLI script
-  const frameworkPath = path.resolve(__dirname, '..', 'index.js');
-  let framework;
+const CONFIG_DIR = path.join(os.homedir(), '.config', 'human-browser');
+const PID_FILE = path.join(CONFIG_DIR, 'server.pid');
+
+function getServerPid() {
   try {
-    framework = require(frameworkPath);
-  } catch (e) {
-    console.error(`${C.red}error:${C.reset} could not load framework: ${e.message}`);
-    process.exit(1);
+    const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10);
+    // Check if process is alive
+    process.kill(pid, 0);
+    return pid;
+  } catch {
+    return null;
+  }
+}
+
+function waitForServer(addr, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    function attempt() {
+      const ws = new WebSocket(addr);
+      ws.on('open', () => { ws.close(); resolve(); });
+      ws.on('error', () => {
+        if (Date.now() - start > timeoutMs) {
+          reject(new Error('server did not start in time'));
+          return;
+        }
+        setTimeout(attempt, 300);
+      });
+    }
+    attempt();
+  });
+}
+
+function spawnDaemon() {
+  const { spawn } = require('child_process');
+  const daemonPath = path.resolve(__dirname, 'server-daemon.js');
+  const child = spawn(process.execPath, [daemonPath], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env },
+    cwd: process.cwd(),
+  });
+  child.unref();
+  return child.pid;
+}
+
+async function startServer(addr) {
+  const existing = getServerPid();
+  if (existing) {
+    console.log(`${C.yellow}server already running${C.reset} (pid ${existing})`);
+    return existing;
   }
 
   console.log(`${C.dim}starting human-browser server...${C.reset}`);
+  const pid = spawnDaemon();
   try {
-    const result = await framework.start();
-    console.log(`${C.green}server ready${C.reset} on ws://localhost:${result.config?.port || 7331}`);
-    console.log(`${C.dim}press Ctrl+C to stop${C.reset}`);
-
-    process.on('SIGINT', () => {
-      console.log(`\n${C.dim}shutting down...${C.reset}`);
-      framework.killBrowserAndExit(result.browserProcess, result.server, 0);
-    });
+    await waitForServer(addr);
+    console.log(`${C.green}server ready${C.reset} on ${addr} (pid ${pid})`);
+    return pid;
   } catch (e) {
+    const logPath = path.join(CONFIG_DIR, 'server.log');
     console.error(`${C.red}error:${C.reset} ${e.message}`);
+    console.error(`${C.dim}check ${logPath} for details${C.reset}`);
     process.exit(1);
   }
 }
 
+function stopServer() {
+  const pid = getServerPid();
+  if (!pid) {
+    console.log(`${C.dim}no server running${C.reset}`);
+    return;
+  }
+  try {
+    process.kill(pid, 'SIGTERM');
+    console.log(`${C.green}server stopped${C.reset} (pid ${pid})`);
+  } catch {
+    console.log(`${C.dim}server already stopped${C.reset}`);
+  }
+  try { fs.unlinkSync(PID_FILE); } catch {}
+}
+
 // --- Main ---
 
-function main() {
-  const args = process.argv.slice(2);
-
-  // Parse flags
-  let addr = 'ws://localhost:7331';
-  let cmd = null;
-  let i = 0;
-
-  while (i < args.length) {
-    if (args[i] === '--addr' && args[i + 1]) {
-      addr = args[i + 1];
-      i += 2;
-    } else if (args[i] === '-c' && args[i + 1]) {
-      cmd = args[i + 1];
-      i += 2;
-    } else if (args[i] === 'start') {
-      startServer();
-      return;
-    } else if (args[i] === '--help' || args[i] === '-h') {
-      console.log('Usage: webpilot [options] [command]');
-      console.log('');
-      console.log('Commands:');
-      console.log('  start              Launch browser + WS server');
-      console.log('  (default)          Interactive REPL (connects to running server)');
-      console.log('');
-      console.log('Options:');
-      console.log('  --addr <url>       WebSocket address (default: ws://localhost:7331)');
-      console.log('  -c <command>       Execute single command and exit');
-      console.log('  -h, --help         Show this help');
-      console.log('');
-      console.log('Pipe mode:');
-      console.log('  echo "go x.com\\ndiscover" | webpilot');
-      console.log('  webpilot <<EOF');
-      console.log('  go example.com');
-      console.log('  discover');
-      console.log('  click #btn');
-      console.log('  EOF');
-      process.exit(0);
-    } else {
-      i++;
-    }
-  }
-
-  // Connect to WebSocket
+function connectAndRun(addr, cmd) {
   try {
     conn = new WebSocket(addr);
   } catch (e) {
     console.error(`${C.red}failed to connect:${C.reset} ${e.message}`);
-    console.error(`${C.dim}is the server running? (webpilot start)${C.reset}`);
     process.exit(1);
   }
 
   conn.on('error', (err) => {
     console.error(`${C.red}failed to connect:${C.reset} ${err.message}`);
-    console.error(`${C.dim}is the server running? (webpilot start)${C.reset}`);
     process.exit(1);
   });
 
@@ -904,6 +913,61 @@ function main() {
       process.exit(0);
     });
   });
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+
+  // Parse flags
+  let addr = 'ws://localhost:7331';
+  let cmd = null;
+  let i = 0;
+
+  while (i < args.length) {
+    if (args[i] === '--addr' && args[i + 1]) {
+      addr = args[i + 1];
+      i += 2;
+    } else if (args[i] === '-c' && args[i + 1]) {
+      cmd = args[i + 1];
+      i += 2;
+    } else if (args[i] === 'start') {
+      await startServer(addr);
+      process.exit(0);
+    } else if (args[i] === 'stop') {
+      stopServer();
+      process.exit(0);
+    } else if (args[i] === '--help' || args[i] === '-h') {
+      console.log('Usage: webpilot [options] [command]');
+      console.log('');
+      console.log('Commands:');
+      console.log('  start              Launch browser + WS server (detached)');
+      console.log('  stop               Stop running server');
+      console.log('  (default)          Interactive REPL');
+      console.log('');
+      console.log('Options:');
+      console.log('  --addr <url>       WebSocket address (default: ws://localhost:7331)');
+      console.log('  -c <command>       Execute single command and exit');
+      console.log('  -h, --help         Show this help');
+      console.log('');
+      console.log('Pipe mode:');
+      console.log('  echo "go x.com\\ndiscover" | webpilot');
+      console.log('  webpilot <<EOF');
+      console.log('  go example.com');
+      console.log('  discover');
+      console.log('  click #btn');
+      console.log('  EOF');
+      process.exit(0);
+    } else {
+      i++;
+    }
+  }
+
+  // Auto-start: if server isn't running, start it
+  if (!getServerPid()) {
+    await startServer(addr);
+  }
+
+  connectAndRun(addr, cmd);
 }
 
 main();

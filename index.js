@@ -54,13 +54,23 @@ function deepMerge(target, ...sources) {
 
 function loadConfig(overrides = {}) {
   let fileConfig = {};
-  const jsPath = path.join(process.cwd(), 'human-browser.config.js');
-  const jsonPath = path.join(process.cwd(), 'human-browser.config.json');
+  const homeConfig = path.join(os.homedir(), '.config', 'human-browser');
+  const candidates = [
+    path.join(process.cwd(), 'human-browser.config.js'),
+    path.join(process.cwd(), 'human-browser.config.json'),
+    path.join(homeConfig, 'config.js'),
+    path.join(homeConfig, 'config.json'),
+  ];
 
-  if (fs.existsSync(jsPath)) {
-    fileConfig = require(jsPath);
-  } else if (fs.existsSync(jsonPath)) {
-    fileConfig = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      if (candidate.endsWith('.js')) {
+        fileConfig = require(candidate);
+      } else {
+        fileConfig = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+      }
+      break;
+    }
   }
 
   return deepMerge({}, CONFIG_DEFAULTS, fileConfig, overrides);

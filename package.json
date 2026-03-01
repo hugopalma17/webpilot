@@ -1,6 +1,6 @@
 {
   "name": "h17-webpilot",
-  "version": "0.3.0",
+  "version": "0.3.3",
   "description": "CDP-free browser automation with human-like behavior via Chrome extension + WebSocket",
   "main": "index.js",
   "bin": {
@@ -36,7 +36,7 @@
     "anti-detection",
     "cdp-free",
     "stealth",
-    "scraping",
+    "browser-automation",
     "puppeteer-alternative",
     "ai-agent",
     "llm",

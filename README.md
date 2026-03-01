@@ -1,10 +1,13 @@
 # Human Browser
 
+[![npm](https://img.shields.io/npm/v/h17-webpilot)](https://www.npmjs.com/package/h17-webpilot)
+[![Socket Badge](https://socket.dev/api/badge/npm/package/h17-webpilot)](https://socket.dev/npm/package/h17-webpilot)
+
 CDP-free browser automation with human-like behavior via Chrome extension + WebSocket.
 
-Control Chromium through a WebSocket protocol. Any language can connect. Built-in human-like mouse movement, typing, scrolling, and trap detection. No Puppeteer, no Playwright, no debugging port, no `navigator.webdriver`. 
+Control Chromium through a WebSocket protocol. Any language can connect. Built-in human-like mouse movement, typing, scrolling, and trap detection. No Puppeteer, no Playwright, no debugging port, no `navigator.webdriver`.
 
-Let your AI browse fast an safely.
+Let your AI browse fast and safely.
 
 ## Install
 
@@ -16,34 +19,32 @@ npm install h17-webpilot
 
 ### 1. Configure
 
-```bash
-cp node_modules/h17-webpilot/human-browser.config.example.js human-browser.config.js
-```
-
-Edit `human-browser.config.js` — set your browser path:
+Create `~/.config/human-browser/config.js` (or `human-browser.config.js` in your project):
 
 ```javascript
 module.exports = {
   browser: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
   // Linux:   "/usr/bin/google-chrome"
   // Windows: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-  profile: "./profile",
-  port: 7331,
 };
 ```
 
-### 2. Start
+### 2. Use
 
 ```bash
-npx h17-webpilot start
+webpilot start                          # launches browser + server (detached)
+webpilot -c 'go example.com'            # navigate
+webpilot -c 'discover'                  # list interactive elements
+webpilot -c 'click h1'                  # human click
+webpilot -c 'type #search hello world'  # human type
+webpilot -c 'ss'                        # screenshot
+webpilot stop                           # stop server + browser
 ```
 
-### 3. Connect
-
-#### Interactive CLI
+Or enter the interactive REPL:
 
 ```bash
-npx webpilot
+webpilot
 ```
 
 ```
@@ -54,7 +55,7 @@ wp> type #search hello world
 wp> ss
 ```
 
-#### Node.js (programmatic)
+### Node.js (programmatic)
 
 ```javascript
 const { startWithPage } = require('h17-webpilot');
@@ -65,7 +66,7 @@ await page.humanClick('h1');
 await page.humanType('Hello world', { selector: '#search' });
 ```
 
-#### Any language (WebSocket)
+### Any language (WebSocket)
 
 Connect to `ws://localhost:7331` and send JSON:
 
@@ -164,15 +165,7 @@ Full WebSocket protocol specification: [`protocol/PROTOCOL.md`](protocol/PROTOCO
 
 ## LLM Integration
 
-For AI agents that need to browse the web: [`SKILLS.md`](SKILLS.md)
-
-## Go CLI
-
-A compiled Go CLI is also available in `cli/` for users who prefer a standalone binary:
-
-```bash
-cd cli && go build -o hb && ./hb
-```
+For AI agents that need to browse the web: [`SKILL.md`](SKILL.md)
 
 ## License
 
