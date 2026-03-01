@@ -2,7 +2,9 @@
 
 CDP-free browser automation with human-like behavior via Chrome extension + WebSocket.
 
-Control Chromium through a WebSocket protocol. Any language can connect. Built-in human-like mouse movement, typing, scrolling, and trap detection. No Puppeteer, no Playwright, no debugging port, no `navigator.webdriver`.
+Control Chromium through a WebSocket protocol. Any language can connect. Built-in human-like mouse movement, typing, scrolling, and trap detection. No Puppeteer, no Playwright, no debugging port, no `navigator.webdriver`. 
+
+Let your AI browse fast an safely.
 
 ## Install
 

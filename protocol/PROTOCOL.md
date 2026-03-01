@@ -400,7 +400,6 @@ node test/server.js
 
 # Test different CSP configurations:
 curl http://localhost:3456/?csp=strict      # Blocks all inline/eval
-curl http://localhost:3456/?csp=linkedin    # Allows unsafe-inline
 curl http://localhost:3456/?csp=none        # No CSP
 
 # Run CSP compatibility tests
@@ -410,7 +409,7 @@ node test/all-commands.js
 ### Best Practices
 
 1. **Prefer ISOLATED world operations** - Use `dom.getHTML`, `querySelector`, `human.*` commands
-2. **Extract from rendered DOM** - After scrolling triggers lazy loading, scrape the HTML
+2. **Extract from rendered DOM** - After scrolling triggers lazy loading.
 3. **Use data attributes** - Sites often store data in `data-*` attributes (e.g., `data-view-tracking-scope`)
 4. **Avoid MAIN world unless necessary** - Only for accessing page globals
 5. **Don't worry about CSP console errors** - They're invisible to server-side detection

@@ -36,7 +36,6 @@ const testDir = path.dirname(__filename);
 const CSP_CONFIGS = {
   none: null, // No CSP headers
   strict: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'", // Strict - blocks inline scripts and eval
-  linkedin: "script-src 'self' https://linkedin.com https://static.licdn.com 'unsafe-inline'; style-src 'self' 'unsafe-inline'", // LinkedIn-style - allows unsafe-inline
   unsafeEval: "script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'", // Allows eval but not inline
   unsafeInline: "script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'", // Allows inline but not eval
 };
@@ -45,7 +44,7 @@ const CSP_CONFIGS = {
 const httpServer = http.createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${HTTP_PORT}`);
   
-  // Check for CSP test parameter: ?csp=strict, ?csp=linkedin, etc.
+  // Check for CSP test parameter: ?csp=strict
   const cspMode = url.searchParams.get("csp") || "none";
   const cspHeader = CSP_CONFIGS[cspMode] || CSP_CONFIGS.none;
   
@@ -96,7 +95,6 @@ async function main() {
   console.log(`[test] CSP Test URLs:`);
   console.log(`  - No CSP:     http://localhost:${HTTP_PORT}/`);
   console.log(`  - Strict CSP: http://localhost:${HTTP_PORT}/?csp=strict`);
-  console.log(`  - LinkedIn:   http://localhost:${HTTP_PORT}/?csp=linkedin`);
   console.log(`  - UnsafeEval: http://localhost:${HTTP_PORT}/?csp=unsafeEval`);
   console.log(`  - UnsafeInline: http://localhost:${HTTP_PORT}/?csp=unsafeInline`);
   console.log(`[test] Press Ctrl+C to stop.\n`);

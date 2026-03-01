@@ -1851,6 +1851,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           .catch((e) => sendResponse({ error: e.message }));
         return true; // async
 
+      case "dom.uploadFile": {
+        const el = resolveElement(params);
+        if (!el) { sendResponse({ error: "element not found" }); break; }
+        try {
+          const binary = atob(params.fileContent);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          const blob = new Blob([bytes.buffer], { type: params.mimeType || "application/pdf" });
+          const file = new File([blob], params.fileName || "resume.pdf", { type: params.mimeType || "application/pdf" });
+          const dt = new DataTransfer();
+          dt.items.add(file);
+          el.files = dt.files;
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+          sendResponse({ result: { uploaded: true, fileName: file.name, size: file.size } });
+        } catch (e) { sendResponse({ error: e.message }); }
+        break;
+      }
+
       default:
         sendResponse({ error: `Unknown action: ${action}` });
     }
