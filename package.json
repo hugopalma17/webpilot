@@ -1,6 +1,6 @@
 {
   "name": "h17-webpilot",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "CDP-free browser automation with human-like behavior via Chrome extension + WebSocket",
   "main": "index.js",
   "bin": {
@@ -58,7 +58,6 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "h17-webpilot": "^0.3.3",
     "ws": "^8.19.0"
   }
 }
