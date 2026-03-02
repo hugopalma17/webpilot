@@ -12,8 +12,10 @@ Let your AI browse fast and safely.
 ## Install
 
 ```bash
-npm install h17-webpilot
+npm install -g h17-webpilot
 ```
+
+This installs the `webpilot` and `wp` commands globally.
 
 ## Quick Start
 
