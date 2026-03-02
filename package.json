@@ -1,6 +1,6 @@
 {
   "name": "h17-webpilot",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "CDP-free browser automation with human-like behavior via Chrome extension + WebSocket",
   "main": "index.js",
   "bin": {
@@ -25,7 +25,8 @@
   },
   "scripts": {
     "start": "node index.js",
-    "test": "node test/integration.js"
+    "test": "node test/integration.js",
+    "postinstall": "echo '\n  h17-webpilot installed successfully.\n  CLI commands available: webpilot | wp\n'"
   },
   "keywords": [
     "browser",
@@ -57,7 +58,6 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "h17-webpilot": "^0.3.0",
     "ws": "^8.19.0"
   }
 }
