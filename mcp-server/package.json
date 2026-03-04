@@ -1,0 +1,39 @@
+{
+  "name": "webpilot-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for WebPilot integration, enabling LLMs to control human-like browser automation via the Model Context Protocol",
+  "main": "index.js",
+  "bin": {
+    "webpilot-mcp": "index.js"
+  },
+  "files": [
+    "index.js",
+    "lib/",
+    "README.md"
+  ],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "browser-automation",
+    "webpilot",
+    "human-browser",
+    "ai-agent",
+    "claude",
+    "llm"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hugopalma17/webpilot.git",
+    "directory": "mcp-server"
+  },
+  "author": "Hugo Palma",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.0",
+    "ws": "^8.19.0"
+  }
+}
