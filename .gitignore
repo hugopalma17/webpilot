@@ -41,6 +41,7 @@
 # JS CLI
 !bin/
 !bin/cli.js
+!bin/server-daemon.js
 
 
 
