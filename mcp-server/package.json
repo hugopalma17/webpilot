@@ -1,6 +1,6 @@
 {
   "name": "webpilot-mcp",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "MCP adapter for the Webpilot browser runtime",
   "main": "index.js",
   "bin": {
