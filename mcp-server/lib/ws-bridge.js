@@ -22,7 +22,7 @@ class WSBridge {
 
       ws.on('error', (err) => {
         if (!this.conn) {
-          reject(new Error(`Cannot connect to WebPilot server at ${this.addr} — is it running? (webpilot start)`));
+          reject(new Error(`Cannot connect to Webpilot server at ${this.addr} — is it running? (npx webpilot start)`));
           return;
         }
         console.error(`[webpilot-mcp] ws error: ${err.message}`);
