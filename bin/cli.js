@@ -6,12 +6,200 @@ const readline = require('readline');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+
+function loadFirstRunUtils() {
+  try {
+    return require('../lib/first-run');
+  } catch {
+    const { execFileSync } = require('child_process');
+    const HOME_CONFIG_DIR = path.join(os.homedir(), 'h17-webpilot');
+
+    function configCandidates(cwd = process.cwd()) {
+      return [
+        path.join(cwd, 'human-browser.config.js'),
+        path.join(cwd, 'human-browser.config.json'),
+        path.join(HOME_CONFIG_DIR, 'config.js'),
+        path.join(HOME_CONFIG_DIR, 'config.json'),
+      ];
+    }
+
+    function findExistingConfig(cwd = process.cwd()) {
+      return configCandidates(cwd).find((candidate) => fs.existsSync(candidate)) || null;
+    }
+
+    function commandPath(binary) {
+      try {
+        return execFileSync('which', [binary], { encoding: 'utf8' }).trim() || null;
+      } catch {
+        return null;
+      }
+    }
+
+    function pushCandidate(results, seen, label, candidatePath) {
+      if (!candidatePath || !fs.existsSync(candidatePath)) return;
+      let resolved = candidatePath;
+      try {
+        resolved = fs.realpathSync(candidatePath);
+      } catch {}
+      if (seen.has(resolved)) return;
+      seen.add(resolved);
+      results.push({ label, path: resolved });
+    }
+
+    function detectBrowsers() {
+      const results = [];
+      const seen = new Set();
+      if (process.platform === 'darwin') {
+        const appRoots = ['/Applications', path.join(os.homedir(), 'Applications')];
+        const apps = [
+          ['Google Chrome', 'Google Chrome.app/Contents/MacOS/Google Chrome'],
+          ['Chromium', 'Chromium.app/Contents/MacOS/Chromium'],
+          ['Helium', 'Helium.app/Contents/MacOS/Helium'],
+        ];
+        for (const root of appRoots) {
+          for (const [label, rel] of apps) {
+            pushCandidate(results, seen, label, path.join(root, rel));
+          }
+        }
+      } else if (process.platform === 'win32') {
+        const roots = [
+          process.env.PROGRAMFILES,
+          process.env['PROGRAMFILES(X86)'],
+          process.env.LOCALAPPDATA,
+        ].filter(Boolean);
+        const rels = [
+          ['Google Chrome', 'Google/Chrome/Application/chrome.exe'],
+          ['Chromium', 'Chromium/Application/chrome.exe'],
+        ];
+        for (const root of roots) {
+          for (const [label, rel] of rels) {
+            pushCandidate(results, seen, label, path.join(root, rel));
+          }
+        }
+      } else {
+        const binaries = [
+          ['Google Chrome', 'google-chrome'],
+          ['Google Chrome Stable', 'google-chrome-stable'],
+          ['Chromium', 'chromium'],
+          ['Chromium Browser', 'chromium-browser'],
+        ];
+        for (const [label, binary] of binaries) {
+          const found = commandPath(binary);
+          if (found) pushCandidate(results, seen, label, found);
+        }
+      }
+      return results;
+    }
+
+    function writeDefaultConfig(browserPath, targetPath = path.join(HOME_CONFIG_DIR, 'config.js')) {
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      const contents = `module.exports = {
+  browser: ${JSON.stringify(browserPath || '')},
+  profile: "~/h17-webpilot/profile",
+  port: 7331,
+  startUrl: "https://hugopalma.work",
+  viewport: { width: 1920, height: 1080 },
+  browserArgs: [],
+  connectionTimeout: 120000,
+  logLevel: "info",
+  framework: {
+    handles: {
+      ttlMs: 15 * 60 * 1000,
+      cleanupIntervalMs: 60 * 1000,
+    },
+    profileSeed: {
+      name: "Webpilot",
+      developerMode: true,
+      pinExtension: true,
+      restoreOnStartup: 0,
+      startupUrls: [],
+    },
+    debug: {
+      cursor: true,
+    },
+  },
+  human: {
+    calibrated: false,
+    profileName: "public-default",
+    cursor: {
+      targetInsetRatio: 0.2,
+      spreadRatio: 0.16,
+      spreadMax: 48,
+      cp1MinRatio: 0.2,
+      cp1MaxRatio: 0.28,
+      cp2MinRatio: 0.66,
+      cp2MaxRatio: 0.74,
+      cp2SpreadRatio: 0.3,
+      minSteps: 10,
+      maxSteps: 56,
+      stepDivisor: 6,
+      jitterRatio: 0,
+      jitterMaxPx: 0,
+      stutterChance: 0,
+      driftThresholdPx: 0,
+      driftMinPx: 0,
+      driftMaxPx: 0,
+      overshootRatio: 0,
+      overshootThresholdPx: 240,
+      overshootMinDistancePx: 120,
+      overshootMaxPx: 0,
+      overshootDistanceRatio: 0.04,
+      overshootPerpRatio: 0,
+      overshootBackSteps: 0,
+    },
+    avoid: { selectors: [], classes: [], ids: [], attributes: {} },
+    click: {
+      thinkDelayMin: 35,
+      thinkDelayMax: 90,
+      maxShiftPx: 50,
+      minVisibleRatio: 0.75,
+      comfortTopRatio: 0.18,
+      comfortBottomRatio: 0.82,
+      comfortLeftRatio: 0.06,
+      comfortRightRatio: 0.94,
+      shiftCorrectionMax: 1,
+      stableRectSamples: 3,
+      stableRectIntervalMs: 80,
+      stableRectTolerancePx: 2,
+      stableRectTimeoutMs: 900,
+    },
+    type: {
+      baseDelayMin: 8,
+      baseDelayMax: 20,
+      variance: 4,
+      pauseChance: 0,
+      pauseMin: 0,
+      pauseMax: 0,
+    },
+    scroll: {
+      amountMin: 180,
+      amountMax: 320,
+      backScrollChance: 0.03,
+      backScrollMin: 8,
+      backScrollMax: 24,
+    },
+  },
+};
+`;
+      fs.writeFileSync(targetPath, contents);
+      return targetPath;
+    }
+
+    return {
+      HOME_CONFIG_DIR,
+      findExistingConfig,
+      detectBrowsers,
+      writeDefaultConfig,
+    };
+  }
+}
+
 const {
   HOME_CONFIG_DIR,
   findExistingConfig,
   detectBrowsers,
   writeDefaultConfig,
-} = require('../lib/first-run');
+} = loadFirstRunUtils();
 const { loadConfig } = require('../index');
 const { stopManagedBrowser, normalizeProfilePath } = require('../lib/launcher');
 
