@@ -1,13 +1,25 @@
-# Human Browser
+# Webpilot
 
 [![npm](https://img.shields.io/npm/v/h17-webpilot)](https://www.npmjs.com/package/h17-webpilot)
 [![Socket Badge](https://socket.dev/api/badge/npm/package/h17-webpilot)](https://socket.dev/npm/package/h17-webpilot)
 
-CDP-free browser automation with human-like behavior via Chrome extension + WebSocket.
+Webpilot is a browser tool.
 
-Control Chromium through a WebSocket protocol. Any language can connect. Built-in human-like mouse movement, typing, scrolling, and trap detection. No Puppeteer, no Playwright, no debugging port, no `navigator.webdriver`.
+It launches a tested Chromium-based browser with a local extension runtime, exposes a WebSocket protocol, and lets a user, script, or LLM drive that browser through the same command surface.
 
-Let your AI browse fast and safely.
+What Webpilot does:
+- starts and controls a real browser
+- exposes navigation, DOM, cookies, screenshots, and safe interaction commands
+- provides configurable cursor, click, typing, and scroll behavior
+- works from the CLI, raw WebSocket, Node, or an MCP adapter
+
+What Webpilot does not do:
+- decide what to scrape
+- decide what step comes next
+- ship a tuned human profile
+- ship site strategy, retries, or route doctrine
+
+The user or LLM decides the workflow. Webpilot only provides the browser runtime and commands.
 
 ## Install
 
@@ -15,60 +27,96 @@ Let your AI browse fast and safely.
 npm install -g h17-webpilot
 ```
 
-This installs the `webpilot` and `wp` commands globally.
+This installs `webpilot` and `wp`.
 
 ## Quick Start
 
 ### 1. Configure
 
-Create `~/.config/human-browser/config.js` (or `human-browser.config.js` in your project):
+Create `~/h17-webpilot/config.js` or `human-browser.config.js` in your project:
 
 ```javascript
 module.exports = {
-  browser: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  // Linux:   "/usr/bin/google-chrome"
-  // Windows: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+  browser: "/Applications/Chromium.app/Contents/MacOS/Chromium",
+  human: {
+    calibrated: false,
+    profileName: "public-default",
+    cursor: {
+      overshootRatio: 0,
+    },
+  },
 };
 ```
 
-### 2. Use
+The example file is `human-browser.config.example.js`.
+
+### 2. Start
 
 ```bash
-webpilot start                          # launches browser + server (detached)
-webpilot -c 'go example.com'            # navigate
-webpilot -c 'discover'                  # list interactive elements
-webpilot -c 'click h1'                  # human click
-webpilot -c 'type #search hello world'  # human type
-webpilot -c 'ss'                        # screenshot
-webpilot stop                           # stop server + browser
+webpilot start
+webpilot start -d
 ```
 
-Or enter the interactive REPL:
+This launches the browser and starts the local WebSocket bridge on `ws://localhost:7331`.
+
+Use `webpilot start -d` if you want an append-only session log.
+
+- default log path: `~/h17-webpilot/webpilot.log`
+- override path in config with `framework.debug.sessionLogPath`
+
+### 3. Use the tool
+
+```bash
+webpilot -c 'go example.com'
+webpilot -c 'discover'
+webpilot -c 'click h1'
+webpilot -c 'wait h1'
+webpilot -c 'html'
+webpilot -c 'cookies load ./cookies.json'
+```
+
+Use the same loop every time:
+1. inspect
+2. act
+3. verify
+
+## CLI
+
+`webpilot` is the main public surface.
 
 ```bash
 webpilot
+webpilot -c 'go example.com'
+webpilot start
+webpilot start -d
+webpilot stop
 ```
 
+Core commands:
+- `go <url>`: navigate
+- `discover`: list interactive elements with handles
+- `q <selector>` / `query <selector>`: query elements
+- `wait <selector>`: wait for a selector
+- `click <selector|handleId>`: safe click
+- `type [selector] <text>`: type with the configured public profile
+- `clear <selector>`: clear an input
+- `key <name>` / `press <name>`: send a key
+- `sd [px] [selector]` / `su [px] [selector]`: scroll
+- `html`: read page HTML
+- `ss`: save a screenshot
+- `cookies`: dump cookies
+- `cookies load <file>`: load cookies from a JSON array file
+- `frames`: list frames
+- `webpilot start -d`: start detached and append WS commands/events to `~/h17-webpilot/webpilot.log` unless config overrides the path
+
+Raw mode stays available:
+
+```bash
+webpilot -c 'human.click {"selector": "button[type=submit]"}'
+webpilot -c '{"action": "dom.getHTML", "params": {}}'
 ```
-wp> go example.com
-wp> discover
-wp> click h1
-wp> type #search hello world
-wp> ss
-```
 
-### Node.js (programmatic)
-
-```javascript
-const { startWithPage } = require('h17-webpilot');
-
-const { page } = await startWithPage();
-await page.goto('https://example.com');
-await page.humanClick('h1');
-await page.humanType('Hello world', { selector: '#search' });
-```
-
-### Any language (WebSocket)
+## WebSocket Protocol
 
 Connect to `ws://localhost:7331` and send JSON:
 
@@ -76,98 +124,147 @@ Connect to `ws://localhost:7331` and send JSON:
 { "id": "1", "action": "tabs.navigate", "params": { "url": "https://example.com" } }
 ```
 
-## CLI Reference
+Capability groups:
+- `tabs`
+- `dom`
+- `human`
+- `cookies`
+- `events`
+- `framework`
 
-**Navigation:**
-- `go <url>` — navigate (auto-adds `https://`)
-- `reload` / `back` / `forward` — page navigation
-- `sd [px] [selector]` — scroll down
-- `su [px] [selector]` — scroll up
+Full reference: `protocol/PROTOCOL.md`
 
-**Query:**
-- `q <selector>` — find all matches with handle IDs
-- `wait <selector>` — wait for selector to appear
-- `discover` — list all interactive elements
+## Node API
 
-**Interact:**
-- `click <selector|handleId>` — human click (bezier cursor + safety checks)
-- `type [selector] <text>` — human type (character-by-character with variance)
-- `clear <selector>` — clear input field
-- `focus <selector>` — focus element
-- `key <name>` — key press (Enter, Tab, Escape...)
-
-**Inspect:**
-- `eval <js>` — evaluate JavaScript
-- `title` / `url` / `html` — quick page info
-- `ss` — screenshot (saves PNG to current directory)
-- `box <selector>` — bounding box
-- `cookies` — dump all cookies
-- `frames` — list all frames
-
-**Meta:**
-- `.tabs` — list tabs (with 0-9 aliases)
-- `.tab <n>` — switch active tab
-- `.events` — toggle event display
-- `.status` — connection info
-- `.quit` — exit
-
-**Raw mode:**
-- `action.name {"key": "value"}` — any protocol command
-- `{"id": "1", "action": "...", ...}` — raw WebSocket JSON
-
-## Programmatic API
+The Node API is a wrapper over the same WebSocket protocol.
 
 ```javascript
-const {
-  start,           // Launch browser + WS server
-  startWithPage,   // start + return BridgePage on first tab
-  connectToServer, // Connect to already-running server
-  loadConfig,      // Load human-browser.config.js
-  BridgePage,      // Page automation class
-  BridgeElement,   // DOM element wrapper
-  BridgeKeyboard,  // Keyboard input
-  BridgeCursor,    // Mouse cursor with bezier movement
-} = require('h17-webpilot');
+const { startWithPage } = require('h17-webpilot');
+
+const { page } = await startWithPage();
+await page.navigate('https://example.com');
+await page.query('h1');
+await page.click('h1');
+await page.waitFor('body');
 ```
 
-## Architecture
+Useful methods:
+- `navigate(url)` / legacy `goto(url)`
+- `query(selector)` / legacy `$(selector)`
+- `queryAll(selector)` / legacy `$$(selector)`
+- `waitFor(selector)` / legacy `waitForSelector(selector)`
+- `read()` / legacy `content()`
+- `click(...)` / legacy `humanClick(...)`
+- `type(...)` / legacy `humanType(...)`
+- `scroll(...)` / legacy `humanScroll(...)`
+- `clearInput(...)` / legacy `humanClearInput(...)`
+- `pressKey(key)`
+- `configure(config)` / legacy `setConfig(config)`
 
-1. Node.js server starts a local WebSocket bridge on port 7331
-2. Chromium launches with the extension loaded into a clean profile
-3. The extension connects to the WS bridge from its service worker
-4. Your code (any language) connects to the same WS endpoint
-5. Commands are relayed to the extension and executed in-page
+## Config
 
-The extension runs as a content script in Chrome's ISOLATED world. No CDP, no debugging protocol, no detectable automation flags.
+Public config is split into:
+- `framework`: runtime behavior, debug toggles, handle retention
+- `human`: cursor, click, typing, scroll, and avoid rules
 
-### Human Behavior
+The public package exposes a lot of knobs on purpose. The user decides how much to tune. The package does not ship a strong profile.
 
-All `human.*` commands include:
+Example:
 
-- Bezier curve mouse movement with overshoot
-- Randomized timing and typing cadence
-- Scroll behavior with flick sub-scrolls and back-scroll variance
-- 13-point honeypot/trap detection (aria-hidden, offsetParent, opacity, visibility, sub-pixel, bounding-box shift, class-name regex)
-- Configurable `avoid` rules per-request and global
+```javascript
+module.exports = {
+  framework: {
+    debug: {
+      cursor: true,
+      sessionLogPath: '~/h17-webpilot/webpilot.log',
+    },
+  },
+  human: {
+    calibrated: false,
+    profileName: 'public-default',
+    cursor: {
+      spreadRatio: 0.16,
+      jitterRatio: 0,
+      stutterChance: 0,
+      driftThresholdPx: 0,
+      overshootRatio: 0,
+    },
+    click: {
+      thinkDelayMin: 35,
+      thinkDelayMax: 90,
+      maxShiftPx: 50,
+    },
+    type: {
+      baseDelayMin: 8,
+      baseDelayMax: 20,
+      variance: 4,
+      pauseChance: 0,
+      pauseMin: 0,
+      pauseMax: 0,
+    },
+  },
+};
+```
 
-### Safety Layer
+Auth/session bootstrap example:
 
-`human.click` returns `{ clicked: false, reason: "..." }` instead of clicking unsafe elements:
+```javascript
+module.exports = {
+  browser: "/Applications/Chromium.app/Contents/MacOS/Chromium",
+  boot: {
+    cookiesPath: "./cookies.json",
+    commands: [
+      "go https://hugopalma.work",
+      "cookies load ./cookies.json",
+      { action: "framework.getConfig", params: {} }
+    ],
+  },
+};
+```
 
-- `aria-hidden` — screen reader hidden
-- `honeypot-class` — trap class names (ghost, sr-only, visually-hidden, etc.)
-- `opacity-zero` / `visibility-hidden` — invisible elements
-- `sub-pixel` — elements smaller than 5x5px
-- `element-shifted` — element moved during think time
-- `no-bounding-box` / `element-disappeared` — element not in DOM
+`boot.cookiesPath` loads a cookie jar before commands run.
+`boot.commands` accepts:
+- command strings like the CLI shorthands
+- `cookies load <file>` entries
+- raw objects: `{ action, params, tabId? }`
 
-## Protocol
+These defaults do not represent a human profile:
+- typing is very fast
+- overshoot is off
+- jitter is off
+- drift is off
 
-Full WebSocket protocol specification: [`protocol/PROTOCOL.md`](protocol/PROTOCOL.md)
+They are there to show what is configurable. The package does not ship your final values.
 
-## LLM Integration
+## First Run
 
-For AI agents that need to browse the web: [`SKILL.md`](SKILL.md)
+If no config file exists, `webpilot start` will:
+- detect installed browsers
+- ask the user to choose one when needed
+- generate `~/h17-webpilot/config.js`
+
+The generated config uses the same public defaults shown above.
+
+If you start with `webpilot start -d`, session logging is enabled even if the config does not set it.
+The path comes from `framework.debug.sessionLogPath` when present, otherwise it falls back to `~/h17-webpilot/webpilot.log`.
+
+## Tested Browsers
+
+Tested browsers:
+- Chromium
+- Helium
+- Google Chrome
+
+## Limits
+
+- Defaults are for demonstration and development, not for behavior parity.
+- The browser tool does not decide workflows.
+- The user or LLM still has to choose selectors, waits, retries, and verification steps.
+- `dom.evaluate` may hit CSP restrictions on some sites. DOM reading and interaction still work through the isolated content-script path.
+
+## Skill Usage
+
+`SKILL.md` explains how an LLM should use Webpilot as a browser tool.
 
 ## License
 

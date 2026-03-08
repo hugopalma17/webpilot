@@ -1,5 +1,5 @@
 
-// BridgeJSHandle — Puppeteer-compatible JSHandle
+// BridgeJSHandle — serialized JS result wrapper
 
 
 class BridgeJSHandle {
@@ -39,7 +39,7 @@ class BridgeJSHandle {
 }
 
 
-// BridgeElement — Puppeteer-compatible ElementHandle
+// BridgeElement — DOM element wrapper with compatibility helpers
 
 
 class BridgeElement {
@@ -85,11 +85,19 @@ class BridgeElement {
     return new BridgeElement(this._page, handleId, selector);
   }
 
+  async query(selector) {
+    return this.$(selector);
+  }
+
   async $$(selector) {
     const handleIds = await this._page._send('dom.querySelectorAllWithin', {
       parentHandleId: this._handleId, selector,
     });
     return handleIds.map(id => new BridgeElement(this._page, id, selector));
+  }
+
+  async queryAll(selector) {
+    return this.$$(selector);
   }
 
   async getAttribute(name) {

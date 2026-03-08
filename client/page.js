@@ -1,7 +1,7 @@
 const { BridgeElement, BridgeJSHandle } = require("./element");
 const { BridgeKeyboard } = require("./keyboard");
 
-// BridgePage — Puppeteer-compatible Page + human.* convenience methods
+// BridgePage — page wrapper over the WS protocol with legacy compatibility methods
 
 class BridgePage {
   constructor(transport) {
@@ -64,6 +64,14 @@ class BridgePage {
     // Use CSP-safe dom.getHTML instead of evaluate
     const result = await this._send("dom.getHTML");
     return result?.html || "";
+  }
+
+  async navigate(url, options = {}) {
+    return this.goto(url, options);
+  }
+
+  async read() {
+    return this.content();
   }
 
   // Discover all interactive elements on the page (CSP-safe, no evaluate needed)
@@ -166,9 +174,17 @@ class BridgePage {
     return new BridgeElement(this, handleId, selector);
   }
 
+  async query(selector) {
+    return this.$(selector);
+  }
+
   async $$(selector) {
     const handleIds = await this._send("dom.querySelectorAll", { selector });
     return handleIds.map((id) => new BridgeElement(this, id, selector));
+  }
+
+  async queryAll(selector) {
+    return this.$$(selector);
   }
 
   async waitForSelector(selector, options = {}) {
@@ -181,10 +197,18 @@ class BridgePage {
     return new BridgeElement(this, handleId, selector);
   }
 
+  async waitFor(selector, options = {}) {
+    return this.waitForSelector(selector, options);
+  }
+
   // --- Tab Management ---
 
   async tabs() {
     return this._send("tabs.list");
+  }
+
+  async listTabs() {
+    return this.tabs();
   }
 
   async close() {
@@ -218,10 +242,18 @@ class BridgePage {
     return this._send("cookies.getAll", {});
   }
 
+  async getCookies() {
+    return this.cookies();
+  }
+
   async setCookie(...cookies) {
     for (const cookie of cookies) {
       await this._send("cookies.set", { cookie });
     }
+  }
+
+  async setCookies(...cookies) {
+    return this.setCookie(...cookies);
   }
 
   // --- Events ---
@@ -241,7 +273,7 @@ class BridgePage {
     }
   }
 
-  // --- Human Commands (safe, human-like) ---
+  // --- Human Commands (safe interaction pipeline) ---
 
   async humanClick(selectorOrElement, options = {}) {
     const params =
@@ -265,6 +297,34 @@ class BridgePage {
         ? { handleId: selectorOrElement._handleId }
         : { selector: selectorOrElement };
     return this._send("human.clearInput", { ...params, ...options });
+  }
+
+  async click(selectorOrElement, options = {}) {
+    return this.humanClick(selectorOrElement, options);
+  }
+
+  async type(text, options = {}) {
+    return this.humanType(text, options);
+  }
+
+  async scroll(selector, options = {}) {
+    return this.humanScroll(selector, options);
+  }
+
+  async clearInput(selectorOrElement, options = {}) {
+    return this.humanClearInput(selectorOrElement, options);
+  }
+
+  async pressKey(key) {
+    return this.keyboard.press(key);
+  }
+
+  async configure(config) {
+    return this.setConfig(config);
+  }
+
+  async getFrameworkConfig() {
+    return this.getConfig();
   }
 }
 

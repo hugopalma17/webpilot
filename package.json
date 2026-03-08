@@ -1,7 +1,7 @@
 {
   "name": "h17-webpilot",
-  "version": "0.3.7",
-  "description": "CDP-free browser automation with human-like behavior via Chrome extension + WebSocket",
+  "version": "0.3.8",
+  "description": "Browser control framework for agents via Chrome extension + WebSocket",
   "main": "index.js",
   "bin": {
     "webpilot": "bin/cli.js",
@@ -31,16 +31,13 @@
   "keywords": [
     "browser",
     "automation",
-    "human",
+    "agent",
+    "llm",
+    "mcp",
     "websocket",
     "chrome-extension",
-    "anti-detection",
-    "cdp-free",
-    "stealth",
+    "browser-control",
     "browser-automation",
-    "puppeteer-alternative",
-    "ai-agent",
-    "llm",
     "web-automation"
   ],
   "repository": {

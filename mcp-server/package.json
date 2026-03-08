@@ -1,7 +1,7 @@
 {
   "name": "webpilot-mcp",
   "version": "0.1.0",
-  "description": "MCP server for WebPilot integration, enabling LLMs to control human-like browser automation via the Model Context Protocol",
+  "description": "MCP adapter for the Webpilot browser runtime",
   "main": "index.js",
   "bin": {
     "webpilot-mcp": "index.js"
@@ -15,11 +15,13 @@
     "mcp",
     "model-context-protocol",
     "browser-automation",
+    "browser-control",
     "webpilot",
     "human-browser",
     "ai-agent",
     "claude",
-    "llm"
+    "llm",
+    "websocket"
   ],
   "repository": {
     "type": "git",

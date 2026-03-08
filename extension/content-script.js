@@ -86,6 +86,11 @@ function saveCursorPosition() {
 // Debug mode — defaults are configurable from framework config.
 let debugMode = frameworkRuntime.debug.cursor;
 
+function numberConfig(config, key, fallback) {
+  const value = Number(config?.[key]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
 function applyFrameworkConfig(rawConfig) {
   if (!rawConfig || typeof rawConfig !== "object") return;
 
@@ -133,13 +138,26 @@ function easeInOut(t) {
 }
 
 // Generate bezier path from (x0,y0) to (x1,y1) with human-like control points
-function generateBezierPath(x0, y0, x1, y1, steps) {
+function generateBezierPath(x0, y0, x1, y1, steps, cursorConfig = {}) {
   const dist = Math.hypot(x1 - x0, y1 - y0);
   if (dist < 2) return [{ x: x1, y: y1 }];
 
   // Control points offset perpendicular to the line
   // More spread = more arc curvature
-  const spread = Math.min(dist * 0.35, 120);
+  const spreadRatio = numberConfig(cursorConfig, "spreadRatio", 0.35);
+  const spreadMax = numberConfig(cursorConfig, "spreadMax", 120);
+  const cp1MinRatio = numberConfig(cursorConfig, "cp1MinRatio", 0.2);
+  const cp1MaxRatio = numberConfig(cursorConfig, "cp1MaxRatio", 0.35);
+  const cp2MinRatio = numberConfig(cursorConfig, "cp2MinRatio", 0.65);
+  const cp2MaxRatio = numberConfig(cursorConfig, "cp2MaxRatio", 0.8);
+  const cp2SpreadRatio = numberConfig(cursorConfig, "cp2SpreadRatio", 0.6);
+  const minSteps = Math.max(2, Math.floor(numberConfig(cursorConfig, "minSteps", 15)));
+  const maxSteps = Math.max(minSteps, Math.floor(numberConfig(cursorConfig, "maxSteps", 100)));
+  const stepDivisor = Math.max(1, numberConfig(cursorConfig, "stepDivisor", 4));
+  const jitterRatio = numberConfig(cursorConfig, "jitterRatio", 0.003);
+  const jitterMaxPx = numberConfig(cursorConfig, "jitterMaxPx", 1.5);
+
+  const spread = Math.min(dist * spreadRatio, spreadMax);
   const angle = Math.atan2(y1 - y0, x1 - x0);
   const perpAngle = angle + Math.PI / 2;
 
@@ -148,22 +166,22 @@ function generateBezierPath(x0, y0, x1, y1, steps) {
   const bias2 = (Math.random() - 0.5) * 2;
   const cp1x =
     x0 +
-    (x1 - x0) * (0.2 + Math.random() * 0.15) +
+    (x1 - x0) * (cp1MinRatio + Math.random() * Math.max(0, cp1MaxRatio - cp1MinRatio)) +
     Math.cos(perpAngle) * bias1 * spread;
   const cp1y =
     y0 +
-    (y1 - y0) * (0.2 + Math.random() * 0.15) +
+    (y1 - y0) * (cp1MinRatio + Math.random() * Math.max(0, cp1MaxRatio - cp1MinRatio)) +
     Math.sin(perpAngle) * bias1 * spread;
   const cp2x =
     x0 +
-    (x1 - x0) * (0.65 + Math.random() * 0.15) +
-    Math.cos(perpAngle) * bias2 * spread * 0.6;
+    (x1 - x0) * (cp2MinRatio + Math.random() * Math.max(0, cp2MaxRatio - cp2MinRatio)) +
+    Math.cos(perpAngle) * bias2 * spread * cp2SpreadRatio;
   const cp2y =
     y0 +
-    (y1 - y0) * (0.65 + Math.random() * 0.15) +
-    Math.sin(perpAngle) * bias2 * spread * 0.6;
+    (y1 - y0) * (cp2MinRatio + Math.random() * Math.max(0, cp2MaxRatio - cp2MinRatio)) +
+    Math.sin(perpAngle) * bias2 * spread * cp2SpreadRatio;
 
-  const numSteps = steps || Math.max(15, Math.min(Math.floor(dist / 4), 100));
+  const numSteps = steps || Math.max(minSteps, Math.min(Math.floor(dist / stepDivisor), maxSteps));
   const points = [];
 
   for (let i = 1; i <= numSteps; i++) {
@@ -177,7 +195,7 @@ function generateBezierPath(x0, y0, x1, y1, steps) {
     // Micro-jitter (hand tremor) — strongest in the middle of the movement
     // Fades near start and end where hand is steadier
     const jitterStrength =
-      Math.sin(linearT * Math.PI) * Math.min(dist * 0.003, 1.5);
+      Math.sin(linearT * Math.PI) * Math.min(dist * jitterRatio, jitterMaxPx);
     px += (Math.random() - 0.5) * jitterStrength * 2;
     py += (Math.random() - 0.5) * jitterStrength * 2;
 
@@ -272,7 +290,7 @@ function moveCursorDot(x, y) {
 }
 
 // Dispatch mouse move along path with variable timing (ease-in-out speed)
-function dispatchMousePath(points) {
+function dispatchMousePath(points, cursorConfig = {}) {
   clearTrail();
 
   return new Promise((resolve) => {
@@ -307,7 +325,8 @@ function dispatchMousePath(points) {
 
       // Variable frame timing — occasionally skip a frame for micro-stutter
       // Real hands don't move at perfectly uniform frame rate
-      if (Math.random() < 0.08 && i < total - 2) {
+      const stutterChance = numberConfig(cursorConfig, "stutterChance", 0.08);
+      if (Math.random() < stutterChance && i < total - 2) {
         // Double-frame pause (~32ms instead of ~16ms) — simulates hand hesitation
         requestAnimationFrame(() => requestAnimationFrame(step));
       } else {
@@ -319,23 +338,34 @@ function dispatchMousePath(points) {
 }
 
 // Overshoot: move past target then correct back
-function generateOvershootPath(x0, y0, x1, y1) {
+function generateOvershootPath(x0, y0, x1, y1, cursorConfig = {}) {
   const dist = Math.hypot(x1 - x0, y1 - y0);
-  if (dist < 100) return generateBezierPath(x0, y0, x1, y1);
+  const overshootRatio = numberConfig(cursorConfig, "overshootRatio", 0.2);
+  const overshootMinDistancePx = numberConfig(cursorConfig, "overshootMinDistancePx", 100);
+  const overshootMaxPx = numberConfig(cursorConfig, "overshootMaxPx", 20);
+  const overshootDistanceRatio = numberConfig(cursorConfig, "overshootDistanceRatio", 0.06);
+  const overshootPerpRatio = numberConfig(cursorConfig, "overshootPerpRatio", 0.5);
+  const overshootBackSteps = Math.max(2, Math.floor(numberConfig(cursorConfig, "overshootBackSteps", 10)));
+  if (overshootRatio <= 0) return generateBezierPath(x0, y0, x1, y1);
+  if (dist < overshootMinDistancePx) return generateBezierPath(x0, y0, x1, y1, undefined, cursorConfig);
 
   // Overshoot proportional to distance, with randomization
-  const overshoot = Math.min(20, dist * 0.06) * (0.4 + Math.random() * 0.6);
+  const overshoot =
+    Math.min(overshootMaxPx, dist * overshootDistanceRatio) *
+    overshootRatio *
+    (0.4 + Math.random() * 0.6);
+  if (overshoot < 1) return generateBezierPath(x0, y0, x1, y1, undefined, cursorConfig);
   const angle = Math.atan2(y1 - y0, x1 - x0);
   // Slight perpendicular offset on the overshoot too
-  const perpOffset = (Math.random() - 0.5) * overshoot * 0.5;
+  const perpOffset = (Math.random() - 0.5) * overshoot * overshootPerpRatio;
   const perpAngle = angle + Math.PI / 2;
   const overX =
     x1 + Math.cos(angle) * overshoot + Math.cos(perpAngle) * perpOffset;
   const overY =
     y1 + Math.sin(angle) * overshoot + Math.sin(perpAngle) * perpOffset;
 
-  const pathToOver = generateBezierPath(x0, y0, overX, overY);
-  const pathBack = generateBezierPath(overX, overY, x1, y1, 10);
+  const pathToOver = generateBezierPath(x0, y0, overX, overY, undefined, cursorConfig);
+  const pathBack = generateBezierPath(overX, overY, x1, y1, overshootBackSteps, cursorConfig);
 
   return [...pathToOver, ...pathBack];
 }
@@ -418,10 +448,13 @@ function actionBoundingBox(params) {
 
 async function actionMouseMoveTo(params) {
   const el = resolveElement(params);
+  const config = params.config || {};
+  const cursorConfig = config.cursor && typeof config.cursor === "object" ? config.cursor : config;
   const rect = el.getBoundingClientRect();
   // Target: random point within center 60% of element
-  const padX = rect.width * 0.2;
-  const padY = rect.height * 0.2;
+  const targetInsetRatio = numberConfig(cursorConfig, "targetInsetRatio", 0.2);
+  const padX = rect.width * targetInsetRatio;
+  const padY = rect.height * targetInsetRatio;
   const targetX = rect.x + padX + Math.random() * (rect.width - padX * 2);
   const targetY = rect.y + padY + Math.random() * (rect.height - padY * 2);
 
@@ -431,23 +464,31 @@ async function actionMouseMoveTo(params) {
   // If cursor is already on or very near the target, drift away first so
   // the movement path is always visible (avoids teleport-click appearance).
   const dist = Math.hypot(targetX - startX, targetY - startY);
-  if (dist < 80) {
+  const driftThresholdPx = numberConfig(cursorConfig, "driftThresholdPx", 80);
+  const driftMinPx = numberConfig(cursorConfig, "driftMinPx", 80);
+  const driftMaxPx = numberConfig(cursorConfig, "driftMaxPx", 120);
+  if (dist < driftThresholdPx) {
     const driftAngle = Math.random() * Math.PI * 2;
-    const driftDist = 80 + Math.random() * 120;
+    const driftDist = driftMinPx + Math.random() * Math.max(0, driftMaxPx - driftMinPx);
     const driftX = Math.max(0, Math.min(window.innerWidth,  startX + Math.cos(driftAngle) * driftDist));
     const driftY = Math.max(0, Math.min(window.innerHeight, startY + Math.sin(driftAngle) * driftDist));
-    await dispatchMousePath(generateBezierPath(startX, startY, driftX, driftY));
+    await dispatchMousePath(
+      generateBezierPath(startX, startY, driftX, driftY, undefined, cursorConfig),
+      cursorConfig,
+    );
     startX = cursorX;
     startY = cursorY;
   }
 
   const dist2 = Math.hypot(targetX - startX, targetY - startY);
+  const overshootThresholdPx = numberConfig(cursorConfig, "overshootThresholdPx", 200);
+  const overshootRatio = numberConfig(cursorConfig, "overshootRatio", 0.2);
   const points =
-    dist2 > 200
-      ? generateOvershootPath(startX, startY, targetX, targetY)
-      : generateBezierPath(startX, startY, targetX, targetY);
+    dist2 > overshootThresholdPx && overshootRatio > 0
+      ? generateOvershootPath(startX, startY, targetX, targetY, cursorConfig)
+      : generateBezierPath(startX, startY, targetX, targetY, undefined, cursorConfig);
 
-  await dispatchMousePath(points);
+  await dispatchMousePath(points, cursorConfig);
   saveCursorPosition();
   return { x: cursorX, y: cursorY };
 }
@@ -1008,47 +1049,159 @@ function checkHoneypot(el) {
 }
 
 // Shared helper: scroll element into comfortable view before interacting
+function isComfortablyInView(rect, vh, vw, config = {}) {
+  const topRatio =
+    config.comfortTopRatio !== undefined ? config.comfortTopRatio : 0.18;
+  const bottomRatio =
+    config.comfortBottomRatio !== undefined ? config.comfortBottomRatio : 0.82;
+  const leftRatio =
+    config.comfortLeftRatio !== undefined ? config.comfortLeftRatio : 0.06;
+  const rightRatio =
+    config.comfortRightRatio !== undefined ? config.comfortRightRatio : 0.94;
+  const minVisibleRatio =
+    config.minVisibleRatio !== undefined ? config.minVisibleRatio : 0.75;
+
+  const visibleWidth = Math.max(0, Math.min(rect.right, vw) - Math.max(rect.left, 0));
+  const visibleHeight = Math.max(0, Math.min(rect.bottom, vh) - Math.max(rect.top, 0));
+  const visibleArea = visibleWidth * visibleHeight;
+  const totalArea = Math.max(rect.width * rect.height, 1);
+  const visibleRatio = visibleArea / totalArea;
+
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  const scrollTop = window.scrollY;
+  const maxScrollTop = Math.max(
+    0,
+    document.documentElement.scrollHeight - vh,
+  );
+  const nearTopEdge = scrollTop <= vh * 0.12;
+  const nearBottomEdge = maxScrollTop - scrollTop <= vh * 0.12;
+  const comfortTop = nearTopEdge ? 0 : vh * topRatio;
+  const comfortBottom = nearBottomEdge ? vh : vh * bottomRatio;
+  const centerInsideComfortBand =
+    centerY >= comfortTop &&
+    centerY <= comfortBottom &&
+    centerX >= vw * leftRatio &&
+    centerX <= vw * rightRatio;
+
+  return {
+    comfortable: visibleRatio >= minVisibleRatio && centerInsideComfortBand,
+    visibleRatio,
+    centerX,
+    centerY,
+  };
+}
+
+async function waitForScrollSettle(timeoutMs = 1200, intervalMs = 80) {
+  let previous = window.scrollY;
+  let stableCount = 0;
+  const started = Date.now();
+
+  while (Date.now() - started < timeoutMs) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    const current = window.scrollY;
+    if (Math.abs(current - previous) < 2) {
+      stableCount++;
+      if (stableCount >= 3) return;
+    } else {
+      stableCount = 0;
+    }
+    previous = current;
+  }
+}
+
 async function ensureElementVisible(el, params) {
+  const config = params?.config || {};
   let rect = el.getBoundingClientRect();
   const vh = window.innerHeight;
   const vw = window.innerWidth;
   const fullyOffScreen =
     rect.bottom < 0 || rect.top > vh || rect.right < 0 || rect.left > vw;
-  const partiallyVisible =
-    !fullyOffScreen &&
-    (rect.top < 0 ||
-      rect.bottom > vh ||
-      rect.top > vh * 0.85 ||
-      rect.bottom < vh * 0.15);
+  const comfortState = isComfortablyInView(rect, vh, vw, config);
+  const notComfortablyVisible = !fullyOffScreen && !comfortState.comfortable;
 
-  if (fullyOffScreen || partiallyVisible) {
+  if (fullyOffScreen || notComfortablyVisible) {
     // Smooth scroll into comfortable view first
     el.scrollIntoView({ behavior: "smooth", block: "center" });
-    await new Promise((r) =>
-      setTimeout(r, 400 + Math.floor(Math.random() * 300)),
-    );
+    await waitForScrollSettle();
     rect = el.getBoundingClientRect();
 
-    // If still fully off-screen after scrollIntoView, use multi-step humanScroll
-    if (rect.bottom < 0 || rect.top > vh || rect.right < 0 || rect.left > vw) {
+    // If still not comfortably in view after scrollIntoView, use bounded correction
+    // scrolls against the viewport until the element settles inside the comfort band.
+    if (!isComfortablyInView(rect, vh, vw, config).comfortable) {
       const maxSteps = 20;
+      const comfortTargetY =
+        vh *
+        (((config.comfortTopRatio !== undefined ? config.comfortTopRatio : 0.18) +
+          (config.comfortBottomRatio !== undefined ? config.comfortBottomRatio : 0.82)) /
+          2);
+      let lastCenterY = rect.top + rect.height / 2;
+      let stalledSteps = 0;
       for (let step = 0; step < maxSteps; step++) {
         rect = el.getBoundingClientRect();
-        if (rect.top > vh * 0.15 && rect.bottom < vh * 0.85) break;
+        const comfort = isComfortablyInView(rect, vh, vw, config);
+        if (comfort.comfortable) break;
 
-        const direction = rect.top > vh ? "down" : "up";
-        await actionHumanScroll({ ...params, direction });
-        await new Promise((r) =>
-          setTimeout(r, 600 + Math.floor(Math.random() * 800)),
-        );
+        const deltaY = comfort.centerY - comfortTargetY;
+        const amount = Math.max(120, Math.min(700, Math.round(Math.abs(deltaY))));
+        const top = deltaY > 0 ? amount : -amount;
+
+        window.scrollBy({ top, behavior: "smooth" });
+        await waitForScrollSettle(1000, 60);
+
+        rect = el.getBoundingClientRect();
+        const currentCenterY = rect.top + rect.height / 2;
+        if (Math.abs(currentCenterY - lastCenterY) < 4) {
+          stalledSteps++;
+          if (stalledSteps >= 2) break;
+        } else {
+          stalledSteps = 0;
+        }
+        lastCenterY = currentCenterY;
       }
     }
     rect = el.getBoundingClientRect();
-    if (rect.bottom < 0 || rect.top > vh || rect.right < 0 || rect.left > vw) {
+    if (!isComfortablyInView(rect, vh, vw, config).comfortable) {
       return { visible: false, rect };
     }
   }
   return { visible: true, rect };
+}
+
+async function waitForStableRect(el, config = {}) {
+  const stableSamples =
+    config.stableRectSamples !== undefined ? config.stableRectSamples : 3;
+  const intervalMs =
+    config.stableRectIntervalMs !== undefined ? config.stableRectIntervalMs : 80;
+  const tolerancePx =
+    config.stableRectTolerancePx !== undefined ? config.stableRectTolerancePx : 2;
+  const timeoutMs =
+    config.stableRectTimeoutMs !== undefined ? config.stableRectTimeoutMs : 900;
+
+  let previous = el.getBoundingClientRect();
+  let stableCount = 0;
+  const started = Date.now();
+
+  while (Date.now() - started < timeoutMs) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    const current = el.getBoundingClientRect();
+    if (current.width === 0 && current.height === 0) {
+      return { stable: false, rect: current, reason: "element-disappeared" };
+    }
+    const shiftX = Math.abs(current.x - previous.x);
+    const shiftY = Math.abs(current.y - previous.y);
+    if (shiftX <= tolerancePx && shiftY <= tolerancePx) {
+      stableCount++;
+      if (stableCount >= stableSamples) {
+        return { stable: true, rect: current };
+      }
+    } else {
+      stableCount = 0;
+    }
+    previous = current;
+  }
+
+  return { stable: false, rect: previous, reason: "layout-not-stable" };
 }
 
 // Action: human.click — safe click with honeypot detection + bezier movement
@@ -1061,6 +1214,8 @@ async function actionHumanClick(params) {
   const maxDelay =
     config.thinkDelayMax !== undefined ? config.thinkDelayMax : 400;
   const maxShift = config.maxShiftPx !== undefined ? config.maxShiftPx : 50;
+  const shiftCorrectionMax =
+    config.shiftCorrectionMax !== undefined ? config.shiftCorrectionMax : 1;
 
   // Check custom avoid rules
   const avoidResult = checkAvoid(el, params.avoid);
@@ -1072,46 +1227,63 @@ async function actionHumanClick(params) {
   if (!honeypot.safe)
     return { clicked: false, reason: honeypot.reason, detail: honeypot.detail };
 
-  // Bounding box validation
-  let rect = el.getBoundingClientRect();
-  if (rect.width === 0 && rect.height === 0)
-    return { clicked: false, reason: "no-bounding-box" };
+  for (let attempt = 0; attempt <= shiftCorrectionMax; attempt++) {
+    // Bounding box validation
+    let rect = el.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0)
+      return { clicked: false, reason: "no-bounding-box" };
 
-  // Scroll element into comfortable view
-  const scrollResult = await ensureElementVisible(el, params);
-  if (!scrollResult.visible)
-    return {
-      clicked: false,
-      reason: "off-screen",
-      detail: "could not scroll into view",
-    };
-  rect = scrollResult.rect;
+    // Scroll element into comfortable view
+    const scrollResult = await ensureElementVisible(el, params);
+    if (!scrollResult.visible)
+      return {
+        clicked: false,
+        reason: "off-screen",
+        detail: "could not scroll into view",
+      };
+    rect = scrollResult.rect;
 
-  // Bezier mouse move to element
-  await actionMouseMoveTo(params);
+    const stableRect = await waitForStableRect(el, config);
+    if (stableRect.reason === "element-disappeared") {
+      return { clicked: false, reason: "element-disappeared" };
+    }
+    rect = stableRect.rect;
 
-  // Human think-time delay
-  const thinkTime =
-    minDelay + Math.floor(Math.random() * (maxDelay - minDelay + 1));
-  await new Promise((r) => setTimeout(r, thinkTime));
+    // Bezier mouse move to element
+    await actionMouseMoveTo(params);
 
-  // Element shift detection — did it move during think time?
-  const rectAfter = el.getBoundingClientRect();
-  if (rectAfter.width === 0 && rectAfter.height === 0)
-    return { clicked: false, reason: "element-disappeared" };
+    // Human think-time delay
+    const thinkTime =
+      minDelay + Math.floor(Math.random() * (maxDelay - minDelay + 1));
+    await new Promise((r) => setTimeout(r, thinkTime));
 
-  const shiftX = Math.abs(rectAfter.x - rect.x);
-  const shiftY = Math.abs(rectAfter.y - rect.y);
-  if (shiftX > maxShift || shiftY > maxShift)
-    return {
-      clicked: false,
-      reason: "element-shifted",
-      detail: `${shiftX.toFixed(0)}x${shiftY.toFixed(0)}px`,
-    };
+    // Element shift detection — did it move during think time?
+    const rectAfter = el.getBoundingClientRect();
+    if (rectAfter.width === 0 && rectAfter.height === 0)
+      return { clicked: false, reason: "element-disappeared" };
 
-  // Click dispatch (mousedown → mouseup → click)
-  actionClick(params);
-  return { clicked: true };
+    const shiftX = Math.abs(rectAfter.x - rect.x);
+    const shiftY = Math.abs(rectAfter.y - rect.y);
+    if (shiftX > maxShift || shiftY > maxShift) {
+      if (attempt < shiftCorrectionMax) {
+        continue;
+      }
+      return {
+        clicked: false,
+        reason: "element-shifted",
+        detail: `${shiftX.toFixed(0)}x${shiftY.toFixed(0)}px`,
+      };
+    }
+
+    // Click dispatch (mousedown → mouseup → click)
+    if (params.__deferClickDispatch) {
+      return { clicked: true, __dispatchClick: true };
+    }
+    actionClick(params);
+    return { clicked: true };
+  }
+
+  return { clicked: false, reason: "element-shifted", detail: "correction-exhausted" };
 }
 
 // Action: human.type — per-character typing with human-like timing
@@ -1832,7 +2004,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // Human commands — safe, human-like actions with timing + detection
       case "human.click":
         actionHumanClick(params)
-          .then((r) => sendResponse({ result: r }))
+          .then((r) => {
+            if (r && r.__dispatchClick) {
+              const { __dispatchClick, ...result } = r;
+              sendResponse({ result });
+              setTimeout(() => {
+                try { actionClick(params); } catch {}
+              }, 0);
+              return;
+            }
+            sendResponse({ result: r });
+          })
           .catch((e) => sendResponse({ error: e.message }));
         return true; // async
       case "human.type":

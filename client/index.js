@@ -5,7 +5,9 @@ const { BridgeCursor, createHumanCursor } = require('./cursor');
 
 module.exports = {
   BridgePage,
+  AgentPage: BridgePage,
   BridgeElement,
+  AgentElement: BridgeElement,
   BridgeJSHandle,
   BridgeKeyboard,
   BridgeCursor,

@@ -1,5 +1,5 @@
 
-// BridgeKeyboard — Puppeteer-compatible Keyboard
+// BridgeKeyboard — keyboard wrapper over dom.key* commands
 
 
 class BridgeKeyboard {

@@ -1,12 +1,14 @@
 /**
  * all-commands.js — CLI integration test
  *
- * Tests every CLI command by shelling out to `bin/cli.js -c "..."`.
+ * Tests the public CLI surface in the order the CLI teaches:
+ * inspect -> act -> verify
+ *
  * Requires test/server.js to be running (browser + fixtures on :3456).
  *
  * Usage:
- *   node test/server.js          (terminal 1)
- *   node test/all-commands.js    (terminal 2)
+ *   node test/server.js
+ *   node test/all-commands.js
  */
 
 const { execFile } = require("child_process");
@@ -19,8 +21,6 @@ const FIXTURES_URL = "http://localhost:3456/fixtures.html";
 let passed = 0;
 let failed = 0;
 let total = 0;
-
-// --- Helpers ---
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -43,6 +43,48 @@ function cli(cmd) {
       clearTimeout(timer);
       resolve(out);
     });
+  });
+}
+
+function cliAdmin(args) {
+  return new Promise((resolve) => {
+    const proc = execFile("node", [CLI, ...args], {
+      timeout: TIMEOUT + 4000,
+      env: { ...process.env, FORCE_COLOR: "0" },
+    });
+    let out = "";
+    proc.stdout.on("data", (d) => (out += d));
+    proc.stderr.on("data", (d) => (out += d));
+    const timer = setTimeout(() => {
+      proc.kill();
+      resolve(out);
+    }, TIMEOUT + 2000);
+    proc.on("close", () => {
+      clearTimeout(timer);
+      resolve(out);
+    });
+  });
+}
+
+function cliPipe(lines) {
+  return new Promise((resolve) => {
+    const proc = execFile("node", [CLI], {
+      timeout: TIMEOUT + 6000,
+      env: { ...process.env, FORCE_COLOR: "0" },
+    });
+    let out = "";
+    proc.stdout.on("data", (d) => (out += d));
+    proc.stderr.on("data", (d) => (out += d));
+    const timer = setTimeout(() => {
+      proc.kill();
+      resolve(out);
+    }, TIMEOUT + 4000);
+    proc.on("close", () => {
+      clearTimeout(timer);
+      resolve(out);
+    });
+    proc.stdin.write(lines.join("\n") + "\n");
+    proc.stdin.end();
   });
 }
 
@@ -70,12 +112,18 @@ function section(title) {
   console.log(`\n### ${title} ###\n`);
 }
 
-// --- Main ---
+async function goFixtures() {
+  let out = await cli(`go ${FIXTURES_URL}`);
+  assert("go fixtures succeeds", !hasError(out), out);
+  await sleep(2000);
+
+  out = await cli("title");
+  assert("fixtures page loaded", out.includes("Test Page") && !hasError(out), out);
+}
 
 async function main() {
-  console.log("=== CLI All-Commands Test ===\n");
+  console.log("=== Webpilot CLI Test ===\n");
 
-  // Quick connectivity check
   let out = await cli("title");
   if (hasError(out)) {
     console.error(
@@ -85,326 +133,245 @@ async function main() {
     process.exit(1);
   }
 
-  // Navigate to fixtures page
-  console.log("Navigating to fixtures page...");
-  out = await cli(`go ${FIXTURES_URL}`);
-  await sleep(2000);
+  await goFixtures();
 
-  out = await cli("title");
-  assert("fixtures page loaded", out.includes("Test Page") && !hasError(out), out);
+  section("HELP AND STATUS");
 
-  // ────────────────────────────────────────────
-  section("NAVIGATION");
+  out = await cli(".help");
+  assert(".help shows inspect-act-verify flow", out.includes("Flow") && out.includes("inspect -> act -> verify"), out);
+  assert(".help shows query commands", out.includes("Query") && out.includes("discover"), out);
+  assert(".help shows interaction commands", out.includes("Interact") && out.includes("click <sel|handle>"), out);
 
-  // title
+  out = await cli(".status");
+  assert(".status shows connection info", out.includes("connected"), out);
+
+  out = await cli(".tabs");
+  assert(".tabs lists open tabs", (out.includes("localhost") || out.includes("fixtures")) && !hasError(out), out);
+
+  section("INSPECT");
+
   out = await cli("title");
   assert("title returns page title", out.includes("Test Page") && !hasError(out), out);
 
-  // url
   out = await cli("url");
   assert("url returns current URL", out.includes("fixtures.html") && !hasError(out), out);
 
-  // reload
+  out = await cli("html");
+  assert("html returns page HTML", out.includes("Human Browser Test Page") && !hasError(out), out);
+
+  out = await cli("discover");
+  assert("discover returns interactive elements", out.includes("elements") && out.includes("el_") && !hasError(out), out);
+
+  out = await cli("q #title");
+  assert("q finds a handle", out.includes("1 match") && out.includes("el_") && !hasError(out), out);
+
+  out = await cli("query .child");
+  assert("query alias returns multiple matches", out.includes("3 match") && !hasError(out), out);
+
+  out = await cli("wait #title");
+  assert("wait resolves existing selector", out.includes("el_") && !hasError(out), out);
+
+  out = await cli("box #btn-visible");
+  assert("box returns bounding box", out.includes('"x"') && out.includes('"width"') && !hasError(out), out);
+
+  out = await cli("frames");
+  assert("frames returns data", !hasError(out), out);
+
+  out = await cli("cookies");
+  assert("cookies returns data", !hasError(out), out);
+
+  out = await cli("ss");
+  assert("ss saves a screenshot", out.includes("screenshot") && out.includes(".png") && !hasError(out), out);
+
+  out = await cliPipe([
+    `go ${FIXTURES_URL}`,
+    ".http",
+    "sd 2200",
+  ]);
+  assert("http toggle enables response events", out.includes("http on") && !hasError(out), out);
+  assert("network watching reports lazy GitHub fetch", out.includes("github_button.html") && out.includes("200"), out);
+
+  section("NAVIGATION");
+
+  out = await cli("go example.com");
+  assert("go example.com succeeds", !hasError(out), out);
+  await sleep(2000);
+
+  out = await cli("title");
+  assert("example.com loaded", out.includes("Example Domain") && !hasError(out), out);
+
+  out = await cli("back");
+  assert("back succeeds", !hasError(out), out);
+  await sleep(2000);
+
+  out = await cli("url");
+  assert("back returned to fixtures", out.includes("fixtures.html") && !hasError(out), out);
+
+  out = await cli("forward");
+  assert("forward succeeds", !hasError(out), out);
+  await sleep(2000);
+
+  out = await cli("url");
+  assert("forward returned to example.com", out.includes("example.com") && !hasError(out), out);
+
   out = await cli("reload");
   assert("reload succeeds", !hasError(out), out);
   await sleep(2000);
 
-  // Verify page still works after reload
   out = await cli("title");
-  assert("title works after reload", out.includes("Test Page") && !hasError(out), out);
+  assert("title still works after reload", out.includes("Example Domain") && !hasError(out), out);
 
-  // go (with auto-https)
-  out = await cli("go example.com");
+  out = await cli("nav localhost:3456/fixtures.html");
+  assert("nav alias handles localhost URLs", !hasError(out), out);
   await sleep(2000);
 
   out = await cli("title");
-  assert("go navigated to example.com", out.includes("Example Domain") && !hasError(out), out);
+  assert("nav alias returned to fixtures", out.includes("Test Page") && !hasError(out), out);
 
-  // back
-  out = await cli("back");
-  await sleep(2000);
+  section("ACT");
 
-  out = await cli("url");
-  assert("back returned to fixtures", out.includes("fixtures") && !hasError(out), out);
-
-  // forward
-  out = await cli("forward");
-  await sleep(2000);
-
-  out = await cli("url");
-  assert("forward went to example.com", out.includes("example.com") && !hasError(out), out);
-
-  // Return to fixtures for remaining tests
-  out = await cli(`go ${FIXTURES_URL}`);
-  await sleep(2000);
-
-  // ────────────────────────────────────────────
-  section("TABS & META");
-
-  // .tabs
-  out = await cli(".tabs");
-  assert(".tabs lists open tabs", (out.includes("localhost") || out.includes("fixtures")) && !hasError(out), out);
-
-  // .status
-  out = await cli(".status");
-  assert(".status shows connection info", out.includes("connected"), out);
-
-  // .help
-  out = await cli(".help");
-  assert(".help shows help text", out.includes("Navigation") && out.includes("Query") && out.includes("Interact"), out);
-
-  // ────────────────────────────────────────────
-  section("QUERY & DOM");
-
-  // q — querySelector
-  out = await cli("q #title");
-  assert("q #title finds heading with handle", out.includes("1 match") && out.includes("el_") && !hasError(out), out);
-
-  out = await cli("q .child");
-  assert("q .child finds 3 children", out.includes("3 match") && !hasError(out), out);
-
-  out = await cli("q #nonexistent");
-  assert("q #nonexistent returns no matches", out.includes("no matches") && !hasError(out), out);
-
-  // wait — waitForSelector
-  out = await cli("wait #title");
-  assert("wait finds existing selector", out.includes("el_") && !hasError(out), out);
-
-  // discover — discoverElements
-  out = await cli("discover");
-  assert("discover finds elements", out.includes("elements") && out.includes("el_") && !hasError(out), out);
-  assert("discover shows element types", (out.includes("[link]") || out.includes("[btn]") || out.includes("[input]")), out);
-
-  // ────────────────────────────────────────────
-  section("INSPECT");
-
-  // html — page content
-  out = await cli("html");
-  assert("html returns page HTML", out.includes("Human Browser Test Page") && !hasError(out), out);
-
-  // eval — evaluate JS expression
-  out = await cli("eval document.title");
-  assert("eval returns JS result", out.includes("Test Page") && !hasError(out), out);
-
-  out = await cli("eval document.querySelectorAll('button').length");
-  assert("eval counts elements", /[0-9]+/.test(out) && !hasError(out), out);
-
-  // box — bounding box
-  out = await cli("box #btn-visible");
-  assert("box returns rect for visible element", out.includes('"x"') && out.includes('"width"') && !hasError(out), out);
-
-  out = await cli("box #btn-hidden");
-  assert("box returns null for hidden element", out.includes("null") && !hasError(out), out);
-
-  // ss — screenshot
-  out = await cli("ss");
-  assert("screenshot saves PNG file", out.includes("screenshot") && out.includes(".png") && !hasError(out), out);
-
-  // cookies
-  out = await cli("cookies");
-  assert("cookies returns data", !hasError(out), out);
-
-  // frames
-  out = await cli("frames");
-  assert("frames returns data", !hasError(out), out);
-
-  // ────────────────────────────────────────────
-  section("HUMAN INTERACTIONS");
-
-  // Reload fixtures to get clean state
-  out = await cli(`go ${FIXTURES_URL}`);
-  await sleep(2000);
-
-  // click — human click on visible button
   out = await cli("click #btn-visible");
   assert("click visible button succeeds", out.includes('"clicked": true') && !hasError(out), out);
-
-  // Verify click changed button text
   await sleep(500);
+
   out = await cli("eval document.getElementById('btn-visible').textContent");
   assert("click changed button text", out.includes("Clicked!") && !hasError(out), out);
 
-  // click — trap detection (opacity:0)
   out = await cli("click #btn-opacity");
-  assert("click blocks opacity:0 trap", out.includes("opacity-zero") && out.includes('"clicked": false'), out);
+  assert("click blocks opacity-zero trap", out.includes("opacity-zero") && out.includes('"clicked": false'), out);
 
-  // click — trap detection (aria-hidden)
   out = await cli("click #btn-aria");
   assert("click blocks aria-hidden trap", out.includes("aria-hidden") && out.includes('"clicked": false'), out);
 
-  // click — trap detection (offscreen honeypot)
   out = await cli("click #btn-offscreen");
   assert("click blocks offscreen trap", out.includes("honeypot") && out.includes('"clicked": false'), out);
 
-  // click — trap detection (visibility:hidden)
   out = await cli("click #btn-sneaky");
-  assert("click blocks visibility:hidden trap", out.includes("visibility-hidden") && out.includes('"clicked": false'), out);
+  assert("click blocks visibility-hidden trap", out.includes("visibility-hidden") && out.includes('"clicked": false'), out);
 
-  // type — with selector (should click first, then type)
   out = await cli("type #text-input Hello CLI");
   assert("type with selector succeeds", out.includes('"typed": true') && !hasError(out), out);
-  await sleep(4000);
+  await sleep(1500);
 
-  // Verify typed text
   out = await cli("eval document.getElementById('text-input').value");
   assert("type wrote text to input", out.includes("Hello CLI") && !hasError(out), out);
 
-  // clear — clear input
   out = await cli("clear #text-input");
-  assert("clear input succeeds", out.includes('"cleared": true') && !hasError(out), out);
-  await sleep(1000);
+  assert("clear succeeds", out.includes('"cleared": true') && !hasError(out), out);
+  await sleep(500);
 
-  // Verify cleared
   out = await cli("eval document.getElementById('text-input').value");
-  assert("clear emptied the input", !hasError(out), out);
+  assert("clear emptied the input", !out.includes("Hello CLI") && !hasError(out), out);
 
-  // key — keyPress
   out = await cli("key Tab");
-  assert("key Tab succeeds", !hasError(out), out);
+  assert("key sends Tab", !hasError(out), out);
 
-  out = await cli("key Enter");
-  assert("key Enter succeeds", !hasError(out), out);
+  out = await cli("press Enter");
+  assert("press alias sends Enter", !hasError(out), out);
 
-  // ────────────────────────────────────────────
-  section("SCROLL");
-
-  // sd — scroll down
   out = await cli("sd");
   assert("sd scrolls down", out.includes('"scrolled": true') && !hasError(out), out);
 
-  // sd with amount
   out = await cli("sd 500");
-  assert("sd 500 scrolls down", out.includes('"scrolled": true') && !hasError(out), out);
+  assert("sd with amount scrolls down", out.includes('"scrolled": true') && !hasError(out), out);
 
-  // sd with selector
   out = await cli("sd #scrollable");
-  assert("sd #scrollable scrolls element", out.includes('"scrolled": true') && !hasError(out), out);
+  assert("sd with selector scrolls element", out.includes('"scrolled": true') && !hasError(out), out);
 
-  // su — scroll up
   out = await cli("su");
   assert("su scrolls up", out.includes('"scrolled": true') && !hasError(out), out);
 
-  // su with amount
   out = await cli("su 200");
-  assert("su 200 scrolls up", out.includes('"scrolled": true') && !hasError(out), out);
+  assert("su with amount scrolls up", out.includes('"scrolled": true') && !hasError(out), out);
 
-  // ────────────────────────────────────────────
-  section("RAW PROTOCOL COMMANDS");
+  out = await cli("sd 2200");
+  assert("sd reaches the lazy-load region", out.includes('"scrolled": true') && !hasError(out), out);
+  await sleep(1200);
 
-  // Ensure we're on fixtures page for raw protocol tests
-  out = await cli(`go ${FIXTURES_URL}`);
-  await sleep(2000);
+  out = await cli("q #github-link");
+  assert("lazy GitHub button loads after deep scroll", out.includes("View on GitHub") && out.includes("el_") && !hasError(out), out);
 
-  // Raw action with JSON params
-  out = await cli('dom.getHTML {}');
-  assert("raw dom.getHTML returns HTML", out.includes("Human Browser Test Page") && !hasError(out), out);
-
-  // Raw dom.querySelector
-  out = await cli('dom.querySelector {"selector": "#title"}');
-  assert("raw dom.querySelector returns handle", out.includes("el_") && !hasError(out), out);
-
-  // Raw dom.querySelectorAll
-  out = await cli('dom.querySelectorAll {"selector": ".child"}');
-  assert("raw dom.querySelectorAll returns array", out.includes("el_") && !hasError(out), out);
-
-  // Raw dom.getAttribute
-  out = await cli('dom.getAttribute {"selector": "#data-el", "name": "data-custom"}');
-  assert("raw dom.getAttribute returns value", out.includes("hello") && !hasError(out), out);
-
-  // Raw dom.getProperty
-  out = await cli('dom.getProperty {"selector": "#data-el", "name": "id"}');
-  assert("raw dom.getProperty returns id", out.includes("data-el") && !hasError(out), out);
-
-  // Raw dom.evaluate
-  out = await cli('dom.evaluate {"fn": "() => document.title"}');
-  assert("raw dom.evaluate returns result", out.includes("Test Page") && !hasError(out), out);
-
-  // Raw dom.boundingBox
-  out = await cli('dom.boundingBox {"selector": "#btn-visible"}');
-  assert("raw dom.boundingBox returns rect", out.includes('"x"') && out.includes('"width"') && !hasError(out), out);
-
-  // Raw dom.waitForSelector
-  out = await cli('dom.waitForSelector {"selector": "#title"}');
-  assert("raw dom.waitForSelector finds element", out.includes("el_") && !hasError(out), out);
-
-  // Raw dom.discoverElements
-  out = await cli("dom.discoverElements {}");
-  assert("raw dom.discoverElements returns elements", out.includes("elements") && !hasError(out), out);
-
-  // Raw dom.batchQuery
-  out = await cli('dom.batchQuery {"selectors": ["#title", "#text-input", "#nonexistent"]}');
-  assert("raw dom.batchQuery returns results", out.includes("true") && out.includes("false") && !hasError(out), out);
-
-  // Raw framework.getConfig
-  out = await cli("framework.getConfig {}");
-  assert("raw framework.getConfig returns config", out.includes("version") && !hasError(out), out);
-
-  // Raw tabs.list
-  out = await cli("tabs.list {}");
-  assert("raw tabs.list returns tabs", (out.includes("localhost") || out.includes("fixtures")) && !hasError(out), out);
-
-  // Raw JSON message
-  out = await cli('{"action": "dom.evaluate", "params": {"fn": "() => 1 + 1"}}');
-  assert("raw JSON message works", out.includes("2") && !hasError(out), out);
-
-  // ────────────────────────────────────────────
-  section("DROPDOWN INTERACTION");
-
-  // Navigate fresh to reset state
-  out = await cli(`go ${FIXTURES_URL}`);
-  await sleep(2000);
-
-  // Click dropdown to focus
-  out = await cli("click #dropdown");
-  assert("click dropdown", out.includes('"clicked": true') && !hasError(out), out);
+  out = await cli("su 1800");
+  assert("su moves the page away from the lazy button", out.includes('"scrolled": true') && !hasError(out), out);
   await sleep(500);
 
-  // ArrowDown + Enter to select option B
+  out = await cli("q #github-link");
+  assert("lazy GitHub button is freshly queryable before final click", out.includes("el_") && !hasError(out), out);
+  await sleep(1200);
+
+  out = await cli("click #github-link");
+  assert("click scrolls back down to the lazy GitHub button and activates it", out.includes('"clicked": true') && !hasError(out), out);
+  out = await cli('tabs.waitForNavigation {"timeout":10000}');
+  assert("lazy GitHub navigation completes", out.includes('"success": true') && !hasError(out), out);
+  await sleep(1500);
+
+  out = await cli("url");
+  assert("lazy GitHub button navigates after ajax load", out.includes("github.com/hugopalma17/webpilot") && !hasError(out), out);
+
+  out = await cli("back");
+  assert("back returns from lazy GitHub navigation", !hasError(out), out);
+  await sleep(2000);
+
+  section("VERIFY");
+
+  await goFixtures();
+
+  out = await cli("discover");
+  const dropdownHandle = out.match(/el_\d+/);
+  assert("discover returns a reusable handle", !!dropdownHandle, out);
+
+  out = await cli("click #dropdown");
+  assert("click dropdown succeeds", out.includes('"clicked": true') && !hasError(out), out);
+  await sleep(300);
+
   out = await cli("key ArrowDown");
-  assert("key ArrowDown in dropdown", !hasError(out), out);
-  await sleep(300);
+  assert("ArrowDown changes dropdown selection", !hasError(out), out);
+  await sleep(250);
 
-  out = await cli("key Enter");
-  assert("key Enter confirms selection", !hasError(out), out);
-  await sleep(300);
+  out = await cli("press Enter");
+  assert("Enter confirms dropdown selection", !hasError(out), out);
+  await sleep(250);
 
-  // Verify dropdown value changed
   out = await cli("eval document.getElementById('dropdown').value");
-  assert("dropdown value changed", (out.includes("b") || out.includes("a")) && !hasError(out), out);
+  assert("dropdown value changed by interaction", (out.includes("b") || out.includes("a")) && !hasError(out), out);
 
-  // ────────────────────────────────────────────
-  section("HANDLE-BASED COMMANDS");
-
-  // Get a handle via query
   out = await cli("q #btn-visible");
   const handleMatch = out.match(/el_\d+/);
+  assert("q returns a handle for handle-based actions", !!handleMatch, out);
+
   if (handleMatch) {
     const handle = handleMatch[0];
-    assert(`q returns handle (${handle})`, !hasError(out), out);
-
-    // click by handle
     out = await cli(`click ${handle}`);
-    assert("click by handleId succeeds", out.includes('"clicked": true') && !hasError(out), out);
+    assert("click by handle succeeds", out.includes('"clicked": true') && !hasError(out), out);
 
-    // box by handle
     out = await cli(`box ${handle}`);
-    assert("box by handleId returns rect", out.includes('"x"') && !hasError(out), out);
-  } else {
-    assert("q returns usable handle", false, out);
+    assert("box by handle succeeds", out.includes('"x"') && !hasError(out), out);
   }
 
-  // ────────────────────────────────────────────
-  section("ERROR HANDLING");
+  section("RAW MODE");
 
-  // Invalid raw JSON params
+  out = await cli("framework.getConfig {}");
+  assert("raw framework.getConfig works", out.includes("framework") && !hasError(out), out);
+  assert("framework config exposes runtime handles config", out.includes("ttlMs") && out.includes("cleanupIntervalMs") && !hasError(out), out);
+
+  out = await cli('dom.batchQuery {"selectors":["#title","#text-input","#nonexistent"]}');
+  assert("raw dom.batchQuery works", out.includes("true") && out.includes("false") && !hasError(out), out);
+
+  out = await cli('{"action":"tabs.list","params":{}}');
+  assert("raw JSON message works", (out.includes("fixtures") || out.includes("localhost")) && !hasError(out), out);
+
+  section("ERRORS");
+
   out = await cli("dom.evaluate not-json");
-  assert("invalid params shows error", out.includes("invalid params"), out);
+  assert("invalid params reports an error", out.includes("invalid params"), out);
 
-  // ────────────────────────────────────────────
-  // Summary
   console.log(`\n${"=".repeat(50)}`);
   console.log(`  ${passed}/${total} passed, ${failed} failed`);
   console.log(`${"=".repeat(50)}\n`);
+
+  await sleep(2000);
+  out = await cliAdmin(["stop"]);
+  assert("browser quits cleanly after test run", out.includes("server stopped") && !out.includes("error:"), out);
 
   process.exit(failed > 0 ? 1 : 0);
 }

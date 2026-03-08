@@ -130,6 +130,17 @@ async function handleCommand(msg) {
 
   // Tab-level commands handled directly
   switch (action) {
+    case "tabs.getCurrent": {
+      const tab = await chrome.tabs.get(tabId);
+      return {
+        id: tab.id,
+        url: tab.url,
+        title: tab.title,
+        active: tab.active,
+        windowId: tab.windowId,
+        index: tab.index,
+      };
+    }
     case "tabs.list": {
       const tabs = await chrome.tabs.query({});
       return tabs.map((t) => ({
@@ -270,11 +281,13 @@ async function handleCommand(msg) {
     }
     // Evaluate commands — try MAIN world first (for page JS globals), fall back to ISOLATED
     case "dom.evaluate": {
+      let mainErr = null;
       // Try MAIN world first if not explicitly requesting ISOLATED
       if (params.world !== "isolated") {
         try {
           return await executeInPage(tabId, params.fn, params.args || []);
-        } catch (mainErr) {
+        } catch (err) {
+          mainErr = err;
           // MAIN world failed (likely CSP) — fall back to ISOLATED
           console.log("[bridge] MAIN world evaluate failed, falling back to ISOLATED:", mainErr.message);
         }

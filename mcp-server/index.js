@@ -220,11 +220,11 @@ server.tool(
   }
 );
 
-// --- Interaction tools (human-like) ---
+// --- Interaction tools ---
 
 server.tool(
   'click',
-  'Click an element with human-like behavior (bezier cursor movement, timing, honeypot detection). Provide either a CSS selector or a handleId from a previous query.',
+  'Click an element through the safe interaction pipeline. Provide either a CSS selector or a handleId from a previous query.',
   {
     selector: z.string().optional().describe('CSS selector of the element to click'),
     handleId: z.string().optional().describe('Handle ID from a previous find_elements/discover call'),
@@ -245,7 +245,7 @@ server.tool(
 
 server.tool(
   'type',
-  'Type text with human-like timing (per-character delays, thinking pauses). Optionally target a specific element first.',
+  'Type text with the configured interaction timing. Optionally target a specific element first.',
   {
     text: z.string().describe('The text to type'),
     selector: z.string().optional().describe('CSS selector of the input element'),
@@ -266,7 +266,7 @@ server.tool(
 
 server.tool(
   'scroll',
-  'Scroll the page or a specific element with human-like behavior (random amount, smooth, occasional back-scroll)',
+  'Scroll the page or a specific element with the configured interaction policy',
   {
     direction: z.enum(['up', 'down']).optional().default('down').describe('Scroll direction'),
     amount: z.number().optional().describe('Scroll amount in pixels (random 250-550px if omitted)'),
@@ -303,8 +303,43 @@ server.tool(
 );
 
 server.tool(
+  'press_key',
+  'Press a keyboard key.',
+  { key: z.string().describe('Key name: Enter, Tab, Escape, Backspace, ArrowDown, ArrowUp, Space, etc.') },
+  async ({ key }) => {
+    try {
+      const result = await call('dom.keyPress', { key });
+      return textResult(result);
+    } catch (e) {
+      return errorResult(e.message);
+    }
+  }
+);
+
+server.tool(
   'clear_input',
-  'Clear an input field using human-like behavior (click, select all, delete)',
+  'Clear an input field through the safe input pipeline',
+  {
+    selector: z.string().optional().describe('CSS selector of the input to clear'),
+    handleId: z.string().optional().describe('Handle ID of the input to clear'),
+  },
+  async ({ selector, handleId }) => {
+    try {
+      const params = {};
+      if (handleId) params.handleId = handleId;
+      else if (selector) params.selector = selector;
+      else return errorResult('Provide selector or handleId');
+      const result = await call('human.clearInput', params);
+      return textResult(result);
+    } catch (e) {
+      return errorResult(e.message);
+    }
+  }
+);
+
+server.tool(
+  'clear',
+  'Clear an input field through the safe input pipeline.',
   {
     selector: z.string().optional().describe('CSS selector of the input to clear'),
     handleId: z.string().optional().describe('Handle ID of the input to clear'),
@@ -327,7 +362,21 @@ server.tool(
 
 server.tool(
   'find_elements',
-  'Find all elements matching a CSS selector. Returns handle IDs and element info (tag, classes, text, aria-label). Use handle IDs for subsequent click/type actions.',
+  'Find all elements matching a CSS selector. Returns handle IDs and element info for follow-up actions.',
+  { selector: z.string().describe('CSS selector to search for') },
+  async ({ selector }) => {
+    try {
+      const result = await call('dom.queryAllInfo', { selector });
+      return textResult(result);
+    } catch (e) {
+      return errorResult(e.message);
+    }
+  }
+);
+
+server.tool(
+  'query',
+  'Query elements matching a CSS selector and return handles plus summary info.',
   { selector: z.string().describe('CSS selector to search for') },
   async ({ selector }) => {
     try {
@@ -341,7 +390,21 @@ server.tool(
 
 server.tool(
   'discover',
-  'Discover all interactive elements on the page (links, buttons, inputs). Returns handle IDs, types, text, and selectors.',
+  'Discover interactive elements on the page. Returns handle IDs, types, text, and selectors.',
+  {},
+  async () => {
+    try {
+      const result = await call('dom.discoverElements');
+      return textResult(result);
+    } catch (e) {
+      return errorResult(e.message);
+    }
+  }
+);
+
+server.tool(
+  'discover_elements',
+  'Discover interactive elements on the current page.',
   {},
   async () => {
     try {
@@ -355,7 +418,21 @@ server.tool(
 
 server.tool(
   'get_html',
-  'Get the full HTML of the current page along with the page title and URL. Useful for reading page content.',
+  'Read the current page HTML along with the title and URL.',
+  {},
+  async () => {
+    try {
+      const result = await call('dom.getHTML');
+      return textResult(result);
+    } catch (e) {
+      return errorResult(e.message);
+    }
+  }
+);
+
+server.tool(
+  'read_page',
+  'Read the current page HTML, title, and URL.',
   {},
   async () => {
     try {
@@ -405,11 +482,30 @@ server.tool(
   }
 );
 
-// --- DOM tools (raw, non-human) ---
+server.tool(
+  'wait_for_selector',
+  'Wait for an element matching a CSS selector to appear in the DOM.',
+  {
+    selector: z.string().describe('CSS selector to wait for'),
+    timeout: z.number().optional().describe('Timeout in milliseconds (default: 30000)'),
+  },
+  async ({ selector, timeout }) => {
+    try {
+      const params = { selector };
+      if (timeout) params.timeout = timeout;
+      const result = await call('dom.waitForSelector', params);
+      return textResult(result);
+    } catch (e) {
+      return errorResult(e.message);
+    }
+  }
+);
+
+// --- DOM tools (direct) ---
 
 server.tool(
   'dom_click',
-  'Click an element directly (no human-like behavior). Faster but more detectable than human click.',
+  'Click an element directly without the safe interaction pipeline.',
   {
     selector: z.string().optional().describe('CSS selector'),
     handleId: z.string().optional().describe('Handle ID'),
@@ -430,7 +526,7 @@ server.tool(
 
 server.tool(
   'dom_type',
-  'Type text directly into the focused element (no human-like delays)',
+  'Type text directly into the focused element without configured timing.',
   { text: z.string().describe('Text to type') },
   async ({ text }) => {
     try {
@@ -444,7 +540,7 @@ server.tool(
 
 server.tool(
   'dom_scroll',
-  'Scroll the page or element directly (no human-like behavior). Returns before/after scroll positions.',
+  'Scroll the page or element directly. Returns before/after scroll positions.',
   {
     direction: z.enum(['up', 'down']).optional().default('down').describe('Scroll direction'),
     amount: z.number().optional().describe('Scroll amount in pixels'),

@@ -1,4 +1,4 @@
-const { start, killBrowserAndExit } = require('../index');
+const { start, killBrowserAndExit, AgentPage } = require('../index');
 const { exec } = require('child_process');
 const path = require('path');
 
@@ -43,11 +43,26 @@ function assert(name, condition, output) {
 
 async function main() {
   console.log('Starting server + browser...');
+  const startupLogs = [];
+  const originalConsoleLog = console.log;
+  console.log = (...args) => {
+    startupLogs.push(args.join(' '));
+    originalConsoleLog(...args);
+  };
+
   const { server, transport, browserProcess, config } = await start({
     browser: '/Applications/Helium.app/Contents/MacOS/Helium',
+    human: { calibrated: false },
   });
+  console.log = originalConsoleLog;
   _server = server;
   _browserProcess = browserProcess;
+
+  assert(
+    'start warns on uncalibrated public profile',
+    startupLogs.join('\n').includes('Using uncalibrated public profile'),
+    startupLogs.join('\n'),
+  );
 
   // Navigate to example.com via transport (setup)
   const tabs = await transport.send('tabs.list');
@@ -59,6 +74,21 @@ async function main() {
   await new Promise((r) => setTimeout(r, 2000));
 
   console.log('\n--- CLI Integration Tests ---\n');
+
+  const page = new AgentPage(transport);
+  if (tab) page.setTabId(tab.id);
+
+  const html = await page.read();
+  assert('AgentPage.read alias returns HTML', html.includes('Example Domain'), html);
+
+  const heading = await page.query('h1');
+  assert('AgentPage.query alias returns an element', !!heading, String(heading));
+
+  const waited = await page.waitFor('h1');
+  assert('AgentPage.waitFor alias resolves', !!waited, String(waited));
+
+  const listedTabs = await page.listTabs();
+  assert('AgentPage.listTabs alias returns tabs', Array.isArray(listedTabs) && listedTabs.length > 0, JSON.stringify(listedTabs));
 
   // .tabs — list tabs
   let out = await cli('.tabs');

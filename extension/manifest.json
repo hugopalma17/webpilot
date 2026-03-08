@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Human Browser Bridge",
-  "version": "0.3.5",
+  "version": "0.3.8",
   "author": "Hugo Palma",
-  "homepage_url": "https://github.com/hugopalma17/human-browser",
-  "description": "CDP-free browser automation with human-like behavior",
+  "homepage_url": "https://github.com/hugopalma17/webpilot",
+  "description": "Browser control runtime for agents over WebSocket",
   "icons": {
     "16": "icons/icon-16.png",
     "48": "icons/icon-48.png",
