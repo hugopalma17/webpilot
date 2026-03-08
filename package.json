@@ -1,6 +1,6 @@
 {
   "name": "h17-webpilot",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Browser control framework for agents via Chrome extension + WebSocket",
   "main": "index.js",
   "bin": {

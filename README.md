@@ -27,8 +27,6 @@ The user or LLM decides the workflow. Webpilot only provides the browser runtime
 npm install -g h17-webpilot
 ```
 
-This installs `webpilot` and `wp`.
-
 ## Quick Start
 
 ### 1. Configure
@@ -53,13 +51,13 @@ The example file is `human-browser.config.example.js`.
 ### 2. Start
 
 ```bash
-webpilot start
-webpilot start -d
+npx webpilot start
+npx webpilot start -d
 ```
 
 This launches the browser and starts the local WebSocket bridge on `ws://localhost:7331`.
 
-Use `webpilot start -d` if you want an append-only session log.
+Use `npx webpilot start -d` if you want an append-only session log.
 
 - default log path: `~/h17-webpilot/webpilot.log`
 - override path in config with `framework.debug.sessionLogPath`
@@ -67,12 +65,12 @@ Use `webpilot start -d` if you want an append-only session log.
 ### 3. Use the tool
 
 ```bash
-webpilot -c 'go example.com'
-webpilot -c 'discover'
-webpilot -c 'click h1'
-webpilot -c 'wait h1'
-webpilot -c 'html'
-webpilot -c 'cookies load ./cookies.json'
+npx webpilot -c 'go example.com'
+npx webpilot -c 'discover'
+npx webpilot -c 'click h1'
+npx webpilot -c 'wait h1'
+npx webpilot -c 'html'
+npx webpilot -c 'cookies load ./cookies.json'
 ```
 
 Use the same loop every time:
@@ -82,14 +80,12 @@ Use the same loop every time:
 
 ## CLI
 
-`webpilot` is the main public surface.
-
 ```bash
-webpilot
-webpilot -c 'go example.com'
-webpilot start
-webpilot start -d
-webpilot stop
+npx webpilot
+npx webpilot -c 'go example.com'
+npx webpilot start
+npx webpilot start -d
+npx webpilot stop
 ```
 
 Core commands:
@@ -107,13 +103,13 @@ Core commands:
 - `cookies`: dump cookies
 - `cookies load <file>`: load cookies from a JSON array file
 - `frames`: list frames
-- `webpilot start -d`: start detached and append WS commands/events to `~/h17-webpilot/webpilot.log` unless config overrides the path
+- `npx webpilot start -d`: start detached and append WS commands/events to `~/h17-webpilot/webpilot.log` unless config overrides the path
 
 Raw mode stays available:
 
 ```bash
-webpilot -c 'human.click {"selector": "button[type=submit]"}'
-webpilot -c '{"action": "dom.getHTML", "params": {}}'
+npx webpilot -c 'human.click {"selector": "button[type=submit]"}'
+npx webpilot -c '{"action": "dom.getHTML", "params": {}}'
 ```
 
 ## WebSocket Protocol
@@ -238,14 +234,14 @@ They are there to show what is configurable. The package does not ship your fina
 
 ## First Run
 
-If no config file exists, `webpilot start` will:
+If no config file exists, `npx webpilot start` will:
 - detect installed browsers
 - ask the user to choose one when needed
 - generate `~/h17-webpilot/config.js`
 
 The generated config uses the same public defaults shown above.
 
-If you start with `webpilot start -d`, session logging is enabled even if the config does not set it.
+If you start with `npx webpilot start -d`, session logging is enabled even if the config does not set it.
 The path comes from `framework.debug.sessionLogPath` when present, otherwise it falls back to `~/h17-webpilot/webpilot.log`.
 
 ## Tested Browsers

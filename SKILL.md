@@ -13,13 +13,13 @@ It gives you a local browser runtime, a CLI, and a WebSocket command surface. Yo
 
 ```bash
 npm install -g h17-webpilot
-webpilot start
-webpilot start -d
+npx webpilot start
+npx webpilot start -d
 ```
 
-If the runtime is already running, use `webpilot -c '...'` directly.
+If the runtime is already running, use `npx webpilot -c '...'` directly.
 
-Use `webpilot start -d` when you want an append-only session log.
+Use `npx webpilot start -d` when you want an append-only session log.
 
 - default path: `~/h17-webpilot/webpilot.log`
 - config override: `framework.debug.sessionLogPath`
@@ -38,24 +38,24 @@ Do not skip the inspect step unless you already have fresh page state from the i
 
 Use these first:
 
-- `webpilot -c 'html'`: read the current page DOM, title, and URL
-- `webpilot -c 'discover'`: list interactive elements and their handles
-- `webpilot -c 'q <selector>'`: query specific elements
-- `webpilot -c 'wait <selector>'`: wait for a known state change
-- `webpilot -c 'ss'`: take a screenshot when visual context matters
+- `npx webpilot -c 'html'`: read the current page DOM, title, and URL
+- `npx webpilot -c 'discover'`: list interactive elements and their handles
+- `npx webpilot -c 'q <selector>'`: query specific elements
+- `npx webpilot -c 'wait <selector>'`: wait for a known state change
+- `npx webpilot -c 'ss'`: take a screenshot when visual context matters
 
 ## Act
 
 Use the safest matching action:
 
-- `webpilot -c 'click <selector|handleId>'`
-- `webpilot -c 'type [selector] <text>'`
-- `webpilot -c 'clear <selector>'`
-- `webpilot -c 'key <name>'`
-- `webpilot -c 'sd [px] [selector]'`
-- `webpilot -c 'su [px] [selector]'`
-- `webpilot -c 'go <url>'`
-- `webpilot -c 'cookies load ./cookies.json'` when the task requires restoring an existing session
+- `npx webpilot -c 'click <selector|handleId>'`
+- `npx webpilot -c 'type [selector] <text>'`
+- `npx webpilot -c 'clear <selector>'`
+- `npx webpilot -c 'key <name>'`
+- `npx webpilot -c 'sd [px] [selector]'`
+- `npx webpilot -c 'su [px] [selector]'`
+- `npx webpilot -c 'go <url>'`
+- `npx webpilot -c 'cookies load ./cookies.json'` when the task requires restoring an existing session
 
 `click` goes through the human action pipeline. If the runtime refuses the action, respect the refusal and re-inspect the page.
 
@@ -63,11 +63,11 @@ Use the safest matching action:
 
 After navigation or interaction, confirm the new state:
 
-- `webpilot -c 'wait <selector>'`
-- `webpilot -c 'url'`
-- `webpilot -c 'title'`
-- `webpilot -c 'html'`
-- `webpilot -c 'q <selector>'`
+- `npx webpilot -c 'wait <selector>'`
+- `npx webpilot -c 'url'`
+- `npx webpilot -c 'title'`
+- `npx webpilot -c 'html'`
+- `npx webpilot -c 'q <selector>'`
 
 ## Safe Usage Rules
 
@@ -82,15 +82,15 @@ After navigation or interaction, confirm the new state:
 If you need a protocol action that the shorthand CLI does not expose directly, send it through raw mode:
 
 ```bash
-webpilot -c 'dom.queryAllInfo {"selector": "a[href]"}'
-webpilot -c 'human.scroll {"selector": ".feed", "direction": "down"}'
-webpilot -c 'framework.getConfig {}'
+npx webpilot -c 'dom.queryAllInfo {"selector": "a[href]"}'
+npx webpilot -c 'human.scroll {"selector": ".feed", "direction": "down"}'
+npx webpilot -c 'framework.getConfig {}'
 ```
 
 You can also send a full JSON message:
 
 ```bash
-webpilot -c '{"action": "tabs.navigate", "params": {"url": "https://example.com"}}'
+npx webpilot -c '{"action": "tabs.navigate", "params": {"url": "https://example.com"}}'
 ```
 
 ## Strategy Notes
