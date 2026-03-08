@@ -45,18 +45,12 @@ fs.mkdirSync(CONFIG_DIR, { recursive: true });
 // Write PID
 fs.writeFileSync(PID_FILE, String(process.pid));
 
-// Redirect stdout/stderr to log file
+// Redirect stdout/stderr to log file — open fd synchronously so writes are never lost
 const logPath = path.join(CONFIG_DIR, PORT === 7331 ? 'server.log' : `server-${PORT}.log`);
-const logStream = fs.createWriteStream(logPath, { flags: 'w' });
+const logFd = fs.openSync(logPath, 'w');
+const logStream = fs.createWriteStream(null, { fd: logFd });
 process.stdout.write = logStream.write.bind(logStream);
 process.stderr.write = logStream.write.bind(logStream);
-
-const framework = require(path.resolve(__dirname, '..', 'index.js'));
-const {
-  clearBrowserState,
-  stopManagedBrowser,
-  normalizeProfilePath,
-} = require(path.resolve(__dirname, '..', 'lib', 'launcher.js'));
 
 let browserProcess = null;
 let server = null;
@@ -74,11 +68,12 @@ function cleanup(code = 0) {
       try { process.kill(browserProcess.pid, 'SIGTERM'); } catch {}
     }
   }
-  clearBrowserState();
+  if (typeof clearBrowserState === 'function') clearBrowserState();
   try { fs.unlinkSync(PID_FILE); } catch {}
   process.exit(code);
 }
 
+// Register handlers before requires so any startup throw is captured
 process.on('SIGTERM', () => cleanup(0));
 process.on('SIGINT', () => cleanup(0));
 process.on('uncaughtException', (err) => {
@@ -89,6 +84,17 @@ process.on('unhandledRejection', (err) => {
   console.error(`unhandledRejection: ${err && err.stack ? err.stack : err}`);
   cleanup(1);
 });
+
+let framework, clearBrowserState, stopManagedBrowser, normalizeProfilePath;
+try {
+  framework = require(path.resolve(__dirname, '..', 'index.js'));
+  ({ clearBrowserState, stopManagedBrowser, normalizeProfilePath } =
+    require(path.resolve(__dirname, '..', 'lib', 'launcher.js')));
+} catch (err) {
+  console.error(`failed to load framework: ${err.stack || err.message}`);
+  try { fs.unlinkSync(PID_FILE); } catch {}
+  process.exit(1);
+}
 
 framework.start({
   ...(options.browser ? { browser: options.browser } : {}),

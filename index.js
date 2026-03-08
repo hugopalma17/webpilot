@@ -126,12 +126,16 @@ function loadConfig(overrides = {}) {
 
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
-      if (candidate.endsWith('.js')) {
-        fileConfig = require(candidate);
-      } else {
-        fileConfig = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+      try {
+        if (candidate.endsWith('.js')) {
+          fileConfig = require(candidate);
+        } else {
+          fileConfig = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+        }
+        sourcePath = candidate;
+      } catch (err) {
+        throw new Error(`failed to load config ${candidate}: ${err.message}`);
       }
-      sourcePath = candidate;
       break;
     }
   }
