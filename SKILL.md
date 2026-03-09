@@ -101,6 +101,31 @@ npx webpilot -c '{"action": "tabs.navigate", "params": {"url": "https://example.
 - Use screenshots when layout or visibility is the uncertainty, not HTML structure.
 - If the task needs a preloaded authenticated session, load cookies first or use config boot commands.
 
+## MCP Server
+
+An MCP adapter is available for environments that support the Model Context Protocol (e.g. Claude Desktop, Cursor, Windsurf).
+
+Install:
+
+```bash
+npm install -g webpilot-mcp
+```
+
+Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "webpilot": {
+      "command": "npx",
+      "args": ["webpilot-mcp"]
+    }
+  }
+}
+```
+
+The MCP server connects to the same WebSocket runtime (`ws://localhost:7331`). Start the runtime first with `npx webpilot start`, then the MCP tools become available in the host application automatically.
+
 ## Limits
 
 - Public defaults are generic and uncalibrated.
