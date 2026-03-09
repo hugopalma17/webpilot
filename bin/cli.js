@@ -14,17 +14,15 @@ function loadFirstRunUtils() {
     const { execFileSync } = require('child_process');
     const HOME_CONFIG_DIR = path.join(os.homedir(), 'h17-webpilot');
 
-    function configCandidates(cwd = process.cwd()) {
+    function configCandidates() {
       return [
-        path.join(cwd, 'human-browser.config.js'),
-        path.join(cwd, 'human-browser.config.json'),
         path.join(HOME_CONFIG_DIR, 'config.js'),
         path.join(HOME_CONFIG_DIR, 'config.json'),
       ];
     }
 
-    function findExistingConfig(cwd = process.cwd()) {
-      return configCandidates(cwd).find((candidate) => fs.existsSync(candidate)) || null;
+    function findExistingConfig() {
+      return configCandidates().find((candidate) => fs.existsSync(candidate)) || null;
     }
 
     function commandPath(binary) {
@@ -109,10 +107,7 @@ function loadFirstRunUtils() {
     },
     profileSeed: {
       name: "Webpilot",
-      developerMode: true,
       pinExtension: true,
-      restoreOnStartup: 0,
-      startupUrls: [],
     },
     debug: {
       cursor: true,

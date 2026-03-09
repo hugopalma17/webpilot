@@ -38,10 +38,7 @@ module.exports = {
     },
     profileSeed: {
       name: "Webpilot",
-      developerMode: true,
       pinExtension: true,
-      restoreOnStartup: 0,
-      startupUrls: [],
     },
     debug: {
       // Show cursor trail + bezier path on screen (toggle at runtime via dom.setDebug)

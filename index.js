@@ -26,10 +26,7 @@ const CONFIG_DEFAULTS = {
     },
     profileSeed: {
       name: 'Webpilot',
-      developerMode: true,
       pinExtension: true,
-      restoreOnStartup: 0,
-      startupUrls: [],
     },
     debug: {
       cursor: true,
@@ -118,8 +115,6 @@ function loadConfig(overrides = {}) {
   const candidates = explicitConfig
     ? [explicitConfig]
     : [
-        path.join(process.cwd(), 'human-browser.config.js'),
-        path.join(process.cwd(), 'human-browser.config.json'),
         path.join(homeConfig, 'config.js'),
         path.join(homeConfig, 'config.json'),
       ];

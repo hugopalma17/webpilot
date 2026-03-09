@@ -13,6 +13,7 @@
 !lib/
 !lib/server.js
 !lib/launcher.js
+!lib/first-run.js
 
 # Node.js client library
 !client/

@@ -70,7 +70,7 @@ The extension runtime exposes:
 | `framework.reload` | `{}` | `{ reloading: true }` |
 
 Normal usage:
-- Node loads `human-browser.config.js` or `~/h17-webpilot/config.js`
+- Node loads `~/h17-webpilot/config.js` (or path passed via `--config`)
 - the server injects `framework` and `human` settings into commands
 - clients can still call `framework.setConfig` and `framework.getConfig` directly
 
