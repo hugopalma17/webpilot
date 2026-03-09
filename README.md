@@ -5,21 +5,22 @@
 
 Webpilot is a browser tool.
 
-It launches a tested Chromium-based browser with a local extension runtime, exposes a WebSocket protocol, and lets a user, script, or LLM drive that browser through the same command surface.
+It launches a real Chromium-based browser with a local extension runtime, exposes a WebSocket protocol, and lets a user, script, or LLM drive that browser through the same command surface.
+
+**The primary interface is the live DOM — not screenshots.** `discover`, `html`, and `q` give you real page structure, real selectors, and real handles. Screenshots exist as a fallback for when layout or visual rendering is the actual question. For everything else, read the DOM.
 
 What Webpilot does:
-- starts and controls a real browser
-- exposes navigation, DOM, cookies, screenshots, and safe interaction commands
+- starts and controls a real browser — no CDP, no detectable debugging port
+- exposes the live DOM directly: navigation, element discovery, querying, interaction, cookies
 - provides configurable cursor, click, typing, and scroll behavior
 - works from the CLI, raw WebSocket, Node, or an MCP adapter
 
 What Webpilot does not do:
-- decide what to scrape
-- decide what step comes next
+- decide what to do next
 - ship a tuned human profile
 - ship site strategy, retries, or route doctrine
 
-The user or LLM decides the workflow. Webpilot only provides the browser runtime and commands.
+The user or LLM decides the workflow. Webpilot provides the browser runtime and commands.
 
 ## Install
 
@@ -99,7 +100,7 @@ Core commands:
 - `key <name>` / `press <name>`: send a key
 - `sd [px] [selector]` / `su [px] [selector]`: scroll
 - `html`: read page HTML
-- `ss`: save a screenshot
+- `ss`: save a screenshot — use when layout or visual rendering is the question, not DOM structure
 - `cookies`: dump cookies
 - `cookies load <file>`: load cookies from a JSON array file
 - `frames`: list frames
