@@ -720,7 +720,7 @@ server.tool(
 
 async function main() {
   bridge.connect().catch(() => {
-    console.error('[webpilot-mcp] Webpilot server not running — start it with: npx webpilot start');
+    console.error('[webpilot-mcp] Webpilot server not running — start it with: webpilot start');
   });
 
   const transport = new StdioServerTransport();
