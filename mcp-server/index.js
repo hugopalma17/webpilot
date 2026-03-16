@@ -68,9 +68,10 @@ function currentTabShape() {
   };
 }
 
+const mcpPkg = require('./package.json');
 const server = new McpServer({
   name: 'webpilot-mcp',
-  version: '0.3.8',
+  version: mcpPkg.version,
 });
 
 // Navigation / page state

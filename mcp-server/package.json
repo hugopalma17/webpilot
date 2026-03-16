@@ -1,6 +1,6 @@
 {
   "name": "webpilot-mcp",
-  "version": "0.4.3",
+  "version": "0.4.9",
   "description": "MCP adapter for the Webpilot browser runtime",
   "main": "index.js",
   "bin": {
@@ -36,6 +36,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.0",
-    "ws": "^8.19.0"
+    "ws": "^8.19.0",
+    "zod": "^3.25 || ^4.0"
   }
 }
