@@ -1,6 +1,6 @@
 {
   "name": "webpilot",
-  "version": "0.4.9",
+  "version": "0.5.0",
   "description": "CDP-free browser automation with human-like behavior. Drive a real browser via WebSocket from any AI agent.",
   "contextFileName": "SKILL.md",
   "mcpServers": {
