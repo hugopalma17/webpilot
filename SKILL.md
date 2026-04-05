@@ -28,7 +28,7 @@ npm install -g h17-webpilot
 Then run `.help` to list all available commands:
 
 ```bash
-webpilot -c '.help'
+webpilot -c .help
 ```
 
 ## Runtime
@@ -38,12 +38,32 @@ webpilot start
 webpilot start -d
 ```
 
-If the runtime is already running, use `webpilot -c '...'` directly.
+If the runtime is already running, use `webpilot -c ...` directly.
 
 Use `webpilot start -d` when you want an append-only session log.
 
 - default path: `~/h17-webpilot/webpilot.log`
 - config override: `framework.debug.sessionLogPath`
+
+## Quoting Rule
+
+Always double-quote the entire `-c` argument when it contains spaces or special characters:
+
+```bash
+webpilot -c "type #input hello world"
+webpilot -c "click #submit"
+webpilot -c "go https://example.com"
+```
+
+Single-word commands can omit quotes:
+
+```bash
+webpilot -c html
+webpilot -c discover
+webpilot -c ss
+```
+
+Never use single quotes. Never nest unescaped quotes inside the `-c` argument; escaped quotes (e.g., `{\"selector\": \"a[href]\"}`) are permitted when required by the Raw Protocol.
 
 ## Operating Loop
 
@@ -59,24 +79,35 @@ Do not skip the inspect step unless you already have fresh page state from the i
 
 Use these first:
 
-- `webpilot -c 'html'`: read the current page DOM, title, and URL
-- `webpilot -c 'discover'`: list interactive elements and their handles
-- `webpilot -c 'q <selector>'`: query specific elements
-- `webpilot -c 'wait <selector>'`: wait for a known state change
-- `webpilot -c 'ss'`: last resort — only when layout or visual rendering is the actual question, not DOM structure
+- `webpilot -c html` — read the current page DOM, title, and URL
+- `webpilot -c discover` — list interactive elements, their handles, and CSS selectors
+- `webpilot -c "q <selector>"` — query specific elements
+- `webpilot -c "wait <selector>"` — wait for a known state change
+- `webpilot -c ss` — last resort, only when layout or visual rendering is the actual question
 
 ## Act
 
 Use the safest matching action:
 
-- `webpilot -c 'click <selector|handleId>'`
-- `webpilot -c 'type [selector] <text>'`
-- `webpilot -c 'clear <selector>'`
-- `webpilot -c 'key <name>'`
-- `webpilot -c 'sd [px] [selector]'`
-- `webpilot -c 'su [px] [selector]'`
-- `webpilot -c 'go <url>'`
-- `webpilot -c 'cookies load ./cookies.json'` when the task requires restoring an existing session
+- `webpilot -c "click <selector|handleId>"`
+- `webpilot -c "type <cssSelector> <text>"`
+- `webpilot -c "clear <selector>"`
+- `webpilot -c "key <name>"`
+- `webpilot -c "sd [px] [selector]"`
+- `webpilot -c "su [px] [selector]"`
+- `webpilot -c "go <url>"`
+- `webpilot -c "cookies load ./cookies.json"` — when the task requires restoring an existing session
+
+**`type` selector rule:** `type` auto-detects selectors by their first character: `#`, `.`, or `[`. Handle IDs (`el_*`) are **not** recognized by `type` and will be typed as literal text. Always use the CSS selector from `discover` output (the last column, e.g. `#APjFqb`, `.search-input`, `[name=q]`), not the handle ID.
+
+**`type` requires a preceding `click`:** `type` is supposed to chain a click internally, but this does not always work. Always `click` the target element first, then `type` into it. This is the reliable pattern:
+
+```bash
+webpilot -c "click #APjFqb"
+webpilot -c "type #APjFqb hello world"
+```
+
+**`click` accepts both** handle IDs and CSS selectors. Always `discover` or `q` immediately before interacting so handles and selectors are fresh.
 
 `click` goes through the human action pipeline. If the runtime refuses the action, respect the refusal and re-inspect the page.
 
@@ -84,11 +115,11 @@ Use the safest matching action:
 
 After navigation or interaction, confirm the new state:
 
-- `webpilot -c 'wait <selector>'`
-- `webpilot -c 'url'`
-- `webpilot -c 'title'`
-- `webpilot -c 'html'`
-- `webpilot -c 'q <selector>'`
+- `webpilot -c "wait <selector>"`
+- `webpilot -c url`
+- `webpilot -c title`
+- `webpilot -c html`
+- `webpilot -c "q <selector>"`
 
 ## Safe Usage Rules
 
@@ -97,28 +128,29 @@ After navigation or interaction, confirm the new state:
 - Never treat `{ "clicked": false }` as something to brute-force through.
 - Never confuse DOM reading with interaction. Read first, then act.
 - Re-query stale handles instead of reusing them blindly.
+- Do not use `eval` — it hits CSP on most sites.
 
 ## Raw Protocol
 
 If you need a protocol action that the shorthand CLI does not expose directly, send it through raw mode:
 
 ```bash
-webpilot -c 'dom.queryAllInfo {"selector": "a[href]"}'
-webpilot -c 'human.scroll {"selector": ".feed", "direction": "down"}'
-webpilot -c 'framework.getConfig {}'
+webpilot -c "dom.queryAllInfo {\"selector\": \"a[href]\"}"
+webpilot -c "human.scroll {\"selector\": \".feed\", \"direction\": \"down\"}"
+webpilot -c "framework.getConfig {}"
 ```
 
 You can also send a full JSON message:
 
 ```bash
-webpilot -c '{"action": "tabs.navigate", "params": {"url": "https://example.com"}}'
+webpilot -c "{\"action\": \"tabs.navigate\", \"params\": {\"url\": \"https://example.com\"}}"
 ```
 
 ## Strategy Notes
 
-- Prefer `html`, `discover`, and `q` over `eval` when DOM inspection is enough.
+- Use `html`, `discover`, and `q` for DOM inspection (avoid `eval` due to CSP).
 - Use `wait` after page-changing actions.
-- Use handle IDs when you already have a fresh element from `discover` or `q`.
+- Use handle IDs for `click`, CSS selectors for `type`.
 - Use screenshots when layout or visibility is the uncertainty, not HTML structure.
 - If the task needs a preloaded authenticated session, load cookies first or use config boot commands.
 
