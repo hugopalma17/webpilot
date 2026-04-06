@@ -846,14 +846,23 @@ function actionScroll(params) {
   const left =
     direction === "right" ? amount : direction === "left" ? -amount : 0;
 
-  // Support handleId, selector, or fallback to window
+  // Support handleId, selector, or fallback to window.
+  // If the resolved element is not itself scrollable, walk up to the nearest
+  // scrollable ancestor so that sd/su work on elements inside nested scroll containers.
   let el = null;
   if (params.handleId) {
-    el = resolveElement(params);
+    try { el = resolveElement(params); } catch {}
   } else if (selector) {
     el = document.querySelector(selector);
   }
-  const target = (el && el.scrollHeight > el.clientHeight + 10) ? el : window;
+  let target;
+  if (el && el.scrollHeight > el.clientHeight + 10) {
+    target = el;
+  } else if (el) {
+    target = findScrollableAncestor(el);
+  } else {
+    target = window;
+  }
   const before = target === window ? window.scrollY : target.scrollTop;
   target.scrollBy({ top, left, behavior });
   // Check actual scroll after a tick (smooth may not be instant)
@@ -1092,14 +1101,17 @@ function isComfortablyInView(rect, vh, vw, config = {}) {
   };
 }
 
-async function waitForScrollSettle(timeoutMs = 1200, intervalMs = 80) {
-  let previous = window.scrollY;
+async function waitForScrollSettle(timeoutMs = 1200, intervalMs = 80, scrollTarget = null) {
+  const getPos = scrollTarget && scrollTarget !== window
+    ? () => scrollTarget.scrollTop
+    : () => window.scrollY;
+  let previous = getPos();
   let stableCount = 0;
   const started = Date.now();
 
   while (Date.now() - started < timeoutMs) {
     await new Promise((r) => setTimeout(r, intervalMs));
-    const current = window.scrollY;
+    const current = getPos();
     if (Math.abs(current - previous) < 2) {
       stableCount++;
       if (stableCount >= 3) return;
@@ -1108,6 +1120,21 @@ async function waitForScrollSettle(timeoutMs = 1200, intervalMs = 80) {
     }
     previous = current;
   }
+}
+
+// Walk up the DOM to find the nearest scrollable ancestor of an element.
+// Returns the scrollable container or window if none found.
+function findScrollableAncestor(el) {
+  let parent = el.parentElement;
+  while (parent && parent !== document.body && parent !== document.documentElement) {
+    const style = getComputedStyle(parent);
+    const overflowY = style.overflowY || "";
+    const isScrollable = (overflowY === "auto" || overflowY === "scroll") &&
+      parent.scrollHeight > parent.clientHeight + 10;
+    if (isScrollable) return parent;
+    parent = parent.parentElement;
+  }
+  return window;
 }
 
 async function ensureElementVisible(el, params) {
@@ -1121,13 +1148,16 @@ async function ensureElementVisible(el, params) {
   const notComfortablyVisible = !fullyOffScreen && !comfortState.comfortable;
 
   if (fullyOffScreen || notComfortablyVisible) {
+    // Find the scrollable ancestor for this element (may be a nested container, not window)
+    const scrollTarget = findScrollableAncestor(el);
+
     // Smooth scroll into comfortable view first
     el.scrollIntoView({ behavior: "smooth", block: "center" });
-    await waitForScrollSettle();
+    await waitForScrollSettle(1200, 80, scrollTarget);
     rect = el.getBoundingClientRect();
 
     // If still not comfortably in view after scrollIntoView, use bounded correction
-    // scrolls against the viewport until the element settles inside the comfort band.
+    // scrolls against the scrollable ancestor until the element settles inside the comfort band.
     if (!isComfortablyInView(rect, vh, vw, config).comfortable) {
       const maxSteps = 20;
       const comfortTargetY =
@@ -1146,8 +1176,12 @@ async function ensureElementVisible(el, params) {
         const amount = Math.max(120, Math.min(700, Math.round(Math.abs(deltaY))));
         const top = deltaY > 0 ? amount : -amount;
 
-        window.scrollBy({ top, behavior: "smooth" });
-        await waitForScrollSettle(1000, 60);
+        if (scrollTarget === window) {
+          window.scrollBy({ top, behavior: "smooth" });
+        } else {
+          scrollTarget.scrollBy({ top, behavior: "smooth" });
+        }
+        await waitForScrollSettle(1000, 60, scrollTarget);
 
         rect = el.getBoundingClientRect();
         const currentCenterY = rect.top + rect.height / 2;
@@ -1442,8 +1476,17 @@ async function actionHumanScroll(params) {
   } else if (selector) {
     el = document.querySelector(selector);
   }
-  const isTargetScrollable = el && el.scrollHeight > el.clientHeight + 10;
-  const target = isTargetScrollable ? el : window;
+  // If the element itself is scrollable, scroll it directly.
+  // Otherwise walk up to the nearest scrollable ancestor so that
+  // scrolling works on elements inside nested scroll containers.
+  let target;
+  if (el && el.scrollHeight > el.clientHeight + 10) {
+    target = el;
+  } else if (el) {
+    target = findScrollableAncestor(el);
+  } else {
+    target = window;
+  }
 
   while (remaining > 0) {
     // Determine this flick's amount
