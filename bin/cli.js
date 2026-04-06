@@ -279,6 +279,18 @@ function out(msg) {
 let oneshotFired = false;
 function oneshotDone() {
   if (!oneshot || oneshotFired || pipeMode) return;
+
+  // When --http is active in single-command mode, delay exit to collect
+  // HTTP response events that arrive after the command response.
+  if (showHttp) {
+    oneshotFired = true;
+    const httpDrain = parseInt(process.env.WEBPILOT_HTTP_DRAIN_MS, 10) || 5000;
+    setTimeout(() => {
+      if (conn) { conn.close(); conn = null; }
+    }, httpDrain);
+    return;
+  }
+
   oneshotFired = true;
   // Close connection — Node exits naturally once event loop drains (stdout flushes)
   // Keep oneshot=true so conn.on('close') doesn't print [disconnected]
@@ -1343,6 +1355,9 @@ async function main() {
       i += 2;
     } else if (args[i] === '--config') {
       failCli('--config requires a value');
+    } else if (args[i] === '--http') {
+      showHttp = true;
+      i++;
     } else if (args[i] === '-c' && args[i + 1]) {
       cmd = args[i + 1];
       i += 2;
@@ -1367,6 +1382,7 @@ async function main() {
       console.log('  --browser <path>   Override browser binary for start');
       console.log('  --config <path>    Use a specific config file for start/stop');
       console.log('  -c <command>       Execute single command and exit');
+      console.log('  --http             Show HTTP responses (single-command & REPL)');
       console.log('  -h, --help         Show this help');
       console.log('');
       console.log('Pipe mode:');
