@@ -515,7 +515,19 @@ function actionClick(params) {
     // Dispatch on the element physically under the cursor.
     // If nothing is at the cursor coordinates, abort — element is not truly visible.
     const atPoint = document.elementFromPoint(x, y);
-    if (!atPoint) return;
+    if (!atPoint) return { clicked: false, reason: "nothing-at-point" };
+
+    // Occlusion check: verify the element at the click point is the intended
+    // target or a descendant/ancestor of it.  If something else (e.g. a
+    // transparent overlay iframe) is on top, refuse the click.
+    if (atPoint !== el && !el.contains(atPoint) && !atPoint.contains(el)) {
+      const occluder = atPoint.tagName.toLowerCase();
+      const occluderInfo = occluder === "iframe"
+        ? `iframe[src=${(atPoint.src || "").slice(0, 80)}]`
+        : `${occluder}.${(atPoint.className || "").toString().split(" ")[0] || "?"}`;
+      return { clicked: false, reason: "occluded", detail: occluderInfo };
+    }
+
     atPoint.dispatchEvent(new MouseEvent("mousedown", opts));
     if (i === 1) el.focus();
     atPoint.dispatchEvent(new MouseEvent("mouseup", opts));
@@ -835,7 +847,7 @@ function actionKeyUp(params) {
 
 // Action: dom.scroll
 
-function actionScroll(params) {
+async function actionScroll(params) {
   const {
     selector,
     amount = 400,
@@ -863,11 +875,14 @@ function actionScroll(params) {
   } else {
     target = window;
   }
-  const before = target === window ? window.scrollY : target.scrollTop;
+  const getPos = target === window ? () => window.scrollY : () => target.scrollTop;
+  const before = getPos();
   target.scrollBy({ top, left, behavior });
-  // Check actual scroll after a tick (smooth may not be instant)
-  const after = target === window ? window.scrollY : target.scrollTop;
-  return { scrolled: true, before, after, target: target === window ? "window" : "element" };
+  // Wait for smooth scroll to settle before measuring
+  await new Promise((r) => setTimeout(r, 400));
+  const after = getPos();
+  const scrolled = Math.abs(after - before) > 1;
+  return { scrolled, before, after, amount: Math.abs(after - before), target: target === window ? "window" : "element" };
 }
 
 // Action: dom.focus
@@ -1313,7 +1328,8 @@ async function actionHumanClick(params) {
     if (params.__deferClickDispatch) {
       return { clicked: true, __dispatchClick: true };
     }
-    actionClick(params);
+    const clickResult = actionClick(params);
+    if (clickResult && clickResult.clicked === false) return clickResult;
     return { clicked: true };
   }
 
@@ -1488,6 +1504,8 @@ async function actionHumanScroll(params) {
     target = window;
   }
 
+  const before = target === window ? window.scrollY : target.scrollTop;
+
   while (remaining > 0) {
     // Determine this flick's amount
     const flickAmount = Math.min(
@@ -1544,7 +1562,12 @@ async function actionHumanScroll(params) {
   // Final settling pause for smooth scrolling to finish
   await new Promise((r) => setTimeout(r, 500));
 
-  return { scrolled: true, amount: totalAmount };
+  // Verify scroll actually moved
+  const getPos = target === window ? () => window.scrollY : () => target.scrollTop;
+  const after = getPos();
+  const actualAmount = Math.abs(after - before);
+  const scrolled = actualAmount > 1;
+  return { scrolled, amount: scrolled ? actualAmount : 0 };
 }
 
 // Action: dom.batchQuery — perform multiple selector checks in one go
@@ -1650,8 +1673,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ result: actionKeyUp(params) });
         return;
       case "dom.scroll":
-        sendResponse({ result: actionScroll(params) });
-        return;
+        actionScroll(params)
+          .then((r) => sendResponse({ result: r }))
+          .catch((e) => sendResponse({ error: e.message }));
+        return true; // async
       case "dom.focus":
         if (!debugMode) {
           sendResponse({ error: "dom.focus requires debug mode (set framework.debug.cursor: true in config)" });
