@@ -1,6 +1,6 @@
 ---
 name: webpilot
-description: Skill for LLM agents to drive a real browser through the Webpilot CLI and shared WebSocket runtime.
+description: Use when the user asks to navigate a webpage, scrape data from a site, fill out a form, log into a service, click buttons, take a screenshot, automate browser actions, drive Chrome, control a browser, extract content from a URL, search inside a logged-in account, or do anything that requires a real browser session. Drives the user's actual Chrome via the webpilot CLI and a local WebSocket runtime; not headless.
 ---
 
 # Webpilot Skill

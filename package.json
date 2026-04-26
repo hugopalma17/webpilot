@@ -14,7 +14,8 @@
     "extension/",
     "bin/",
     "protocol/PROTOCOL.md",
-    "SKILL.md",
+    "skills/",
+    "gemini-extension.json",
     "human-browser.config.example.js",
     "LICENSE",
     "README.md"
