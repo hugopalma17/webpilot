@@ -11,39 +11,67 @@ It gives you a local browser runtime, a CLI, and a WebSocket command surface. Yo
 
 **Do not default to screenshots.** Webpilot exposes the live DOM directly. Screenshots are slow, expensive, and unnecessary for most tasks. Use `html`, `discover`, and `q` to read page state. Reserve `ss` for cases where layout or visual rendering is the actual question.
 
-## Setup
+## First Run (mandatory bootstrap, do this in order, every session)
 
-Verify the package is installed before doing anything else:
+Webpilot launches a real Chromium-based browser with its extension auto-injected via `--load-extension`. The extension dials back to the local runtime (a Node process listening on `ws://localhost:7331`). All of this is configured by `~/h17-webpilot/config.js`. The very first run on a new machine is **interactive** because it has to detect installed browsers and ask the user which one to use. That interactivity is the single most common reason new users hit `Extension not connected` from inside an agent.
+
+### Step 1 — Verify CLI installed
 
 ```bash
 webpilot --help
 ```
 
-If `webpilot` is not found, install it first:
+If the command is not found, install it first and retry:
 
 ```bash
 npm install -g h17-webpilot
 ```
 
-Then run `.help` to list all available commands:
+### Step 2 — Verify the config exists
 
 ```bash
-webpilot -c .help
+test -f ~/h17-webpilot/config.js || test -f ~/h17-webpilot/config.json && echo "config ok" || echo "config missing"
 ```
 
-## Runtime
+- If the output is `config ok`, skip to Step 3.
+- If the output is `config missing`, **stop and ask the user to complete first-run setup in a real terminal**, because the prompt requires interactive input that this agent shell cannot provide. Surface this verbatim:
+
+> **First-run setup needed (one-time per machine).**
+>
+> Open a normal terminal and run:
+>
+> ```
+> webpilot start
+> ```
+>
+> The command will detect installed browsers, ask you to choose one, write `~/h17-webpilot/config.js`, then launch the browser. Once you see the browser window open, you can press Ctrl+C to stop it. Tell me when this is done and I will continue.
+
+After the user confirms, re-check Step 2 and proceed.
+
+### Step 3 — Start the runtime and WAIT for it to be ready
+
+Run this **every session, unconditionally**. The command is idempotent — if the runtime is already up, it exits cleanly without disrupting state.
 
 ```bash
-webpilot start
 webpilot start -d
 ```
 
-If the runtime is already running, use `webpilot -c ...` directly.
+**Wait for the command to return.** It prints `server ready on ws://localhost:7331 (pid <N>)` when both the runtime and the launched browser are ready. Do not fire any `webpilot -c ...` command until this line appears. Racing ahead produces false connection failures.
 
-Use `webpilot start -d` when you want an append-only session log.
+`-d` writes an append-only session log to `~/h17-webpilot/webpilot.log` (configurable via `framework.debug.sessionLogPath`). Always pass `-d` so the log exists if you need to debug later.
 
-- default path: `~/h17-webpilot/webpilot.log`
-- config override: `framework.debug.sessionLogPath`
+### Step 4 — Verify the connection
+
+```bash
+webpilot -c .tabs
+```
+
+- If this returns a list of open tabs (or an empty array), you are ready. Proceed to the rest of this skill.
+- If this returns **`Extension not connected`** after Steps 1–3 all succeeded, the launched browser process probably failed to start or crashed. **Do not retry, do not loop.** Surface this to the user:
+
+> The webpilot runtime is up but the browser it tried to launch did not connect back. Likely cause: the browser binary path in `~/h17-webpilot/config.js` no longer exists (browser was uninstalled, moved, or updated to a new path). Open the config and verify the `browser:` field points to a real executable. If it does, share the contents of `~/h17-webpilot/webpilot.log` so we can see what the launcher reported.
+
+Wait for the user to fix or confirm before retrying.
 
 ## Quoting Rule
 
