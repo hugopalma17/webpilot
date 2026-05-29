@@ -9,7 +9,7 @@ on:
       - 'v*'
 
 jobs:
-  publish-scoped-webpilot:
+  publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,13 +19,17 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org/
 
+      - name: Publish unscoped h17-webpilot
+        run: npm publish --access=public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.npm_token }}
+
       - name: Rename package to @h17/webpilot for scoped publish
         run: |
           node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('./package.json','utf8')); p.name='@h17/webpilot'; fs.writeFileSync('./package.json', JSON.stringify(p,null,2));"
 
-      - run: npm publish --access=public
+      - name: Publish scoped @h17/webpilot
+        run: npm publish --access=public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.npm_token }}
 
-
-        
