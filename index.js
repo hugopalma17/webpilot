@@ -199,6 +199,12 @@ function resolveBootCommand(line) {
     case 'type': {
       if (!rest) return null;
       const first = parts[1];
+      if (parts.length > 2 && first.startsWith('el_')) {
+        return {
+          action: 'human.type',
+          params: { handleId: first, text: parts.slice(2).join(' ') },
+        };
+      }
       if (
         parts.length > 2 &&
         (first.startsWith('#') ||

@@ -56,6 +56,8 @@ Run this **every session, unconditionally**. The command is idempotent — if th
 webpilot start -d
 ```
 
+**Run `start` bare — never pipe it through `head`/`tail`/etc.** The server attaches to that stdout; when the pager closes the pipe, SIGPIPE kills it (it then restarts on every later `-c` call, breaking the session).
+
 **Wait for the command to return.** It prints `server ready on ws://localhost:7331 (pid <N>)` when both the runtime and the launched browser are ready. Do not fire any `webpilot -c ...` command until this line appears. Racing ahead produces false connection failures.
 
 `-d` writes an append-only session log to `~/h17-webpilot/webpilot.log` (configurable via `framework.debug.sessionLogPath`). Always pass `-d` so the log exists if you need to debug later.
@@ -111,14 +113,16 @@ Use these first:
 - `webpilot -c discover` — list interactive elements, their handles, and CSS selectors
 - `webpilot -c "q <selector>"` — query specific elements
 - `webpilot -c "wait <selector>"` — wait for a known state change
-- `webpilot -c ss` — last resort, only when layout or visual rendering is the actual question
+- `webpilot -c ss` — screenshot; use when layout/visual rendering is the question, or to verify when DOM/URL state is ambiguous ("did that take?")
+- `webpilot -c dump` — one-shot capture of the **whole page** to `dump_<ts>/` (page.html + screenshot.png + cookies.json) for offline grep; best when a page is large or DOM-hostile
+- `webpilot -c .http` — toggle HTTP capture on; afterwards the page's API/XHR traffic (incl. JSON responses) is logged to `~/h17-webpilot/webpilot.log` to grep — the structured-data path when the DOM fights back
 
 ## Act
 
 Use the safest matching action:
 
 - `webpilot -c "click <selector|handleId>"`
-- `webpilot -c "type <cssSelector> <text>"`
+- `webpilot -c "type <selector|el_handle> <text>"`
 - `webpilot -c "clear <selector>"`
 - `webpilot -c "key <name>"`
 - `webpilot -c "sd [px] [selector]"`
@@ -126,14 +130,14 @@ Use the safest matching action:
 - `webpilot -c "go <url>"`
 - `webpilot -c "cookies load ./cookies.json"` — when the task requires restoring an existing session
 
-**`type` selector rule:** `type` auto-detects selectors by their first character: `#`, `.`, or `[`. Handle IDs (`el_*`) are **not** recognized by `type` and will be typed as literal text. Always use the CSS selector from `discover` output (the last column, e.g. `#APjFqb`, `.search-input`, `[name=q]`), not the handle ID.
-
-**`type` requires a preceding `click`:** `type` is supposed to chain a click internally, but this does not always work. Always `click` the target element first, then `type` into it. This is the reliable pattern:
+**`type` targets + chaining (v1.3.3+):** `type` takes a CSS **selector** (first char `#`/`.`/`[`, or contains `=`) **or** an `el_*` **handle** as its first token. Given either, `human.type` **chains the cursor-move + click + focus itself** — no preceding `click` needed:
 
 ```bash
-webpilot -c "click #APjFqb"
-webpilot -c "type #APjFqb hello world"
+webpilot -c "type .search-input hello world"   # selector — chains click+focus+type
+webpilot -c "type el_42 hello world"            # handle (v1.3.3+) — same chain
 ```
+
+Caveats: a bare tag selector (`input.foo`, no leading `#`/`.`/`[`) is treated as **literal text**, not a selector — always lead with `#`/`.`/`[`. `type` **appends** to existing content; `clear` the field first for a fresh value. (Pre-v1.3.3 the CLI typed handles literally and a manual `click` was required.)
 
 **`click` accepts both** handle IDs and CSS selectors. Always `discover` or `q` immediately before interacting so handles and selectors are fresh.
 
@@ -178,7 +182,7 @@ webpilot -c "{\"action\": \"tabs.navigate\", \"params\": {\"url\": \"https://exa
 
 - Use `html`, `discover`, and `q` for DOM inspection (avoid `eval` due to CSP).
 - Use `wait` after page-changing actions.
-- Use handle IDs for `click`, CSS selectors for `type`.
+- `click` and `type` both accept a selector or an `el_*` handle (v1.3.3+); both chain the human click. `type` selectors must lead with `#`/`.`/`[`.
 - Use screenshots when layout or visibility is the uncertainty, not HTML structure.
 - If the task needs a preloaded authenticated session, load cookies first or use config boot commands.
 
