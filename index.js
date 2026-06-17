@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 const { createServer, log, setLogLevel, initDebugLog, debugLog } = require('./lib/server');
 const { launchBrowser, clearBrowserState } = require('./lib/launcher');
 const { BridgePage } = require('./client/page');
@@ -357,6 +358,19 @@ async function start(overrides = {}) {
   const config = loadConfig(overrides);
   setLogLevel(config.logLevel);
 
+  // Per-run auth token. Gates every WS connection so a rogue local process or
+  // a malicious web page cannot drive the browser. Minted fresh each run and
+  // never committed (token.json is gitignored; ~/h17-webpilot/token is outside the repo).
+  const authToken = crypto.randomBytes(32).toString('hex');
+  config.authToken = authToken;
+  try {
+    const wpHome = path.join(os.homedir(), 'h17-webpilot');
+    fs.mkdirSync(wpHome, { recursive: true });
+    fs.writeFileSync(path.join(wpHome, 'token'), authToken, { mode: 0o600 });
+  } catch (err) {
+    log('ERROR', `Could not write client token file: ${err.message}`);
+  }
+
   // Kill anything holding our port from a previous run
   const port = config.port || 7331;
   try {
@@ -382,6 +396,19 @@ async function start(overrides = {}) {
 
   const server = createServer(config);
   const extensionPath = path.join(__dirname, 'extension');
+
+  // Hand the per-run token to the extension's service worker via a packaged
+  // file it fetches with chrome.runtime.getURL. NOT a web_accessible_resource,
+  // so no page can read it. Overwritten each run; gitignored.
+  try {
+    fs.writeFileSync(
+      path.join(extensionPath, 'token.json'),
+      JSON.stringify({ token: authToken, port }),
+      { mode: 0o600 },
+    );
+  } catch (err) {
+    log('ERROR', `Could not write extension token.json: ${err.message}`);
+  }
 
   const browserProcess = launchBrowser(config, extensionPath);
   log('INFO', `Browser launched (PID ${browserProcess.pid})`);

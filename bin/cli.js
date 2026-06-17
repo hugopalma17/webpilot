@@ -961,6 +961,21 @@ function pidFileForPort(port) {
   return path.join(CONFIG_DIR, port === 7331 ? 'server.pid' : `server-${port}.pid`);
 }
 
+// Append the per-run auth token (written by index.js start() to
+// ~/h17-webpilot/token) to a WS address. The server requires it; without the
+// file the raw addr is returned so the auth failure surfaces clearly.
+function authedAddr(addr) {
+  let u;
+  try { u = new URL(addr); } catch { return addr; }
+  // Server binds IPv4 loopback; 'localhost' may resolve to ::1 first and miss it.
+  if (u.hostname === 'localhost') u.hostname = '127.0.0.1';
+  try {
+    const token = fs.readFileSync(path.join(CONFIG_DIR, 'token'), 'utf8').trim();
+    if (token) u.searchParams.set('token', token);
+  } catch {}
+  return u.toString();
+}
+
 function getServerPid(addr = 'ws://localhost:7331') {
   const pidFile = pidFileForPort(portFromAddr(addr));
   try {
@@ -977,7 +992,7 @@ function waitForServer(addr, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
     function attempt() {
-      const ws = new WebSocket(addr);
+      const ws = new WebSocket(authedAddr(addr));
       ws.on('open', () => { ws.close(); resolve(); });
       ws.on('error', () => {
         if (Date.now() - start > timeoutMs) {
@@ -1193,7 +1208,7 @@ function stopServer(addr = 'ws://localhost:7331') {
 
 function connectAndRun(addr, cmd) {
   try {
-    conn = new WebSocket(addr);
+    conn = new WebSocket(authedAddr(addr));
   } catch (e) {
     console.error(`${C.red}failed to connect:${C.reset} ${e.message}`);
     process.exit(1);

@@ -1,4 +1,4 @@
-const WS_URL = "ws://localhost:7331";
+// WS endpoint (port + per-run auth token) is read from token.json in connect().
 let ws = null;
 let reconnectDelay = 1000;
 let reconnectAttempts = 0;
@@ -33,8 +33,20 @@ function deepMerge(target, ...sources) {
   return target;
 }
 
-function connect() {
-  ws = new WebSocket(WS_URL);
+async function connect() {
+  // Read the per-run token the launcher wrote into the extension package.
+  // chrome.runtime.getURL resolves a packaged file; pages cannot fetch it
+  // (not a web_accessible_resource), so the token stays out of page reach.
+  let token = "";
+  let port = 7331;
+  try {
+    const cfg = await (await fetch(chrome.runtime.getURL("token.json"))).json();
+    token = cfg.token || "";
+    if (cfg.port) port = cfg.port;
+  } catch (e) {
+    console.log("[bridge] token.json unavailable — cannot authenticate to server");
+  }
+  ws = new WebSocket(`ws://127.0.0.1:${port}/?token=${encodeURIComponent(token)}`);
 
   ws.onopen = () => {
     console.log("[bridge] connected");
