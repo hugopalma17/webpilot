@@ -94,11 +94,13 @@ webpilot -c '{"action": "dom.getHTML", "params": {}}'
 
 ## WebSocket Protocol
 
-Connect to `ws://localhost:7331` and send JSON:
+Connect to `ws://127.0.0.1:7331` and send JSON:
 
 ```json
 { "id": "1", "action": "tabs.navigate", "params": { "url": "https://example.com" } }
 ```
+
+The server requires the per-run token written to `~/h17-webpilot/token`. Pass it as a query parameter on the connection URL, for example `ws://127.0.0.1:7331/?token=<token>`. The CLI and Node API read and attach this token for you. See the Security model section below.
 
 Capability groups:
 - `tabs`
@@ -220,6 +222,21 @@ Tested browsers:
 - Chromium
 - Helium
 - Google Chrome
+
+## Security model
+
+Webpilot is a local tool. The browser, the WebSocket server, and the client all run on the same machine, and the server is built to stay that way.
+
+- Loopback only. The WebSocket server binds to `127.0.0.1`, so it does not accept connections from other machines on the network.
+- Per-run token. Each `webpilot start` generates a fresh token, writes it to `~/h17-webpilot/token`, and refuses any WebSocket connection that does not present it. The CLI, the Node API, and the bundled extension read that token automatically. The token file is local and rotates every run.
+- Origin rejection. The server rejects WebSocket handshakes that carry a browser `Origin` header, so a malicious web page cannot reach the server even from the same machine.
+
+Two behaviors that automated scanners sometimes flag are intentional and central to what the tool does:
+
+- Script execution in the page. The `dom.evaluate` command runs caller-supplied JavaScript in the page. That is the feature. Driving a browser means running code in pages you navigate to. Execution only happens for commands you send over the authenticated local socket.
+- Cookies over the socket. The `cookies` command reads browser cookies and returns them over the WebSocket. The endpoint is the local `127.0.0.1` server described above, not a remote host. Nothing is sent off the machine. Cookie access exists so you can save and restore your own sessions.
+
+If you run an old version, upgrade. The token, loopback bind, and Origin rejection were added together. See SECURITY.md for how to report issues.
 
 ## Limits
 
