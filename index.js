@@ -20,6 +20,8 @@ const CONFIG_DEFAULTS = {
   browserArgs: [],
   connectionTimeout: 120000,
   logLevel: 'info',
+  cookiePath: '',
+  uploadDir: '',
   framework: {
     handles: {
       ttlMs: 15 * 60 * 1000,

@@ -229,23 +229,6 @@ async function handleCommand(msg) {
         }, timeout);
       });
     }
-    case "tabs.reload": {
-      await chrome.tabs.reload(tabId);
-      return new Promise((resolve) => {
-        const listener = (id, info) => {
-          if (id === tabId && info.status === "complete") {
-            chrome.tabs.onUpdated.removeListener(listener);
-            clearTimeout(timer);
-            resolve({ success: true });
-          }
-        };
-        chrome.tabs.onUpdated.addListener(listener);
-        const timer = setTimeout(() => {
-          chrome.tabs.onUpdated.removeListener(listener);
-          resolve({ success: true, timeout: true });
-        }, 30000);
-      });
-    }
     case "tabs.setViewport": {
       const tab = await chrome.tabs.get(tabId);
       await chrome.windows.update(tab.windowId, {

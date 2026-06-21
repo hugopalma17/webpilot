@@ -30,6 +30,13 @@ Security fixes land on the latest published version. The loopback bind, per-run 
 npm install -g h17-webpilot
 ```
 
+## Security fixes by version
+
+### 1.3.5
+
+- **`dom.uploadFile` path containment**: Previously, a relative `filePath` could walk outside the intended directory. Upload paths are now resolved against `config.uploadDir` (defaulting to the current working directory) and rejected if they escape that root.
+- **Cookie jar location**: Persisted cookies were written to `cookies.json` in the process working directory, which could leak session data to an unexpected location. They are now saved to `~/h17-webpilot/cookies.json` by default, configurable via `config.cookiePath`.
+
 ## Reporting a vulnerability
 
 If you find a security issue, please do not open a public issue first. Report it privately:

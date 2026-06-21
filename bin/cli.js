@@ -547,7 +547,12 @@ function saveScreenshot(dataUrl) {
 
 function loadCookies(rest) {
   const parts = rest.split(/\s+/);
-  const file = parts[1] || 'cookies.json';
+  let file = parts[1];
+  if (!file) {
+    file = path.join(os.homedir(), 'h17-webpilot', 'cookies.json');
+  } else if (!path.isAbsolute(file)) {
+    file = path.resolve(file);
+  }
 
   let data;
   try {
