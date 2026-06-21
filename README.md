@@ -12,6 +12,8 @@ It launches a real Chromium-based browser with a local extension runtime, expose
 
 **The primary interface is the live DOM — not screenshots.** `discover`, `html`, and `q` give you real page structure, real selectors, and real handles. Screenshots exist as a fallback for when layout or visual rendering is the actual question. For everything else, read the DOM.
 
+**The primary CLI workflow is `webpilot start`, then `webpilot -c ...` commands.** The interactive REPL exists for manual testing and debugging; scripts and agents should prefer one-shot commands.
+
 What Webpilot does:
 - starts and controls a real browser — no CDP, no detectable debugging port
 - exposes the live DOM directly: navigation, element discovery, querying, interaction, cookies
@@ -43,15 +45,30 @@ If no config exists, the first run will detect installed browsers, ask you to ch
 
 Use `webpilot start -d` for an append-only session log (`~/h17-webpilot/webpilot.log` by default).
 
+### Recommended Browser Setup
+
+If you want to browse normally while Webpilot is automating in parallel, use a dedicated Chromium-family browser for Webpilot and keep your everyday browser separate. A clean split is Helium, Chromium, Edge, or Vivaldi for Webpilot; Chrome (or your normal browser) for you. That way Webpilot owns its browser binary, profile, and process tree while your personal browser remains independent.
+
+In `~/h17-webpilot/config.js`, point `browser` at the dedicated Webpilot browser and keep `profile` dedicated to Webpilot. Example macOS Helium config:
+
+```javascript
+module.exports = {
+  browser: "/Applications/Helium.app/Contents/MacOS/Helium",
+  profile: "~/h17-webpilot/profile",
+};
+```
+
+If you are not browsing manually at the same time, using the same browser install with Webpilot's dedicated profile is fine.
+
 ### 2. Use the tool
 
 ```bash
-webpilot -c 'go example.com'
-webpilot -c 'discover'
-webpilot -c 'click h1'
-webpilot -c 'wait h1'
-webpilot -c 'html'
-webpilot -c 'cookies load ./cookies.json'
+webpilot -c go example.com
+webpilot -c discover
+webpilot -c click h1
+webpilot -c wait h1
+webpilot -c html
+webpilot -c cookies load ./cookies.json
 ```
 
 Use the same loop every time:
@@ -62,8 +79,8 @@ Use the same loop every time:
 ## CLI
 
 ```bash
-webpilot                        # interactive REPL
-webpilot -c 'go example.com'   # single command
+webpilot -c go example.com      # single command, preferred for scripts/agents
+webpilot                        # manual/debug REPL
 webpilot start                  # launch browser + WS server
 webpilot start -d               # launch with session logging
 webpilot stop                   # stop running server
@@ -75,7 +92,7 @@ Core commands:
 - `q <selector>` / `query <selector>`: query elements
 - `wait <selector>`: wait for a selector
 - `click <selector|handleId>`: safe click
-- `type [selector] <text>`: type with the configured public profile
+- `type [selector|handleId] <text>`: target the element, focus it, then type with the configured public profile
 - `clear <selector>`: clear an input
 - `key <name>` / `press <name>`: send a key
 - `sd [px] [selector]` / `su [px] [selector]`: scroll
@@ -84,6 +101,16 @@ Core commands:
 - `cookies`: dump cookies
 - `cookies load <file>`: load cookies from a JSON array file
 - `frames`: list frames
+
+Single commands can be passed as one quoted command string or as trailing argv after `-c`:
+
+```bash
+webpilot -c "type el_2 hello world"
+webpilot -c type el_2 hello world
+webpilot -c .http go https://example.com
+```
+
+Quote typed text only when quote characters are part of the text you want typed. In the interactive REPL, `.http` toggles response-event printing for the rest of that CLI session. For one-shot commands, prefix the command with `.http` because each `-c` invocation is its own client process; this is most useful around navigation/page-load commands.
 
 Raw mode stays available:
 
@@ -100,7 +127,7 @@ Connect to `ws://127.0.0.1:7331` and send JSON:
 { "id": "1", "action": "tabs.navigate", "params": { "url": "https://example.com" } }
 ```
 
-The server requires the per-run token written to `~/h17-webpilot/token`. Pass it as a query parameter on the connection URL, for example `ws://127.0.0.1:7331/?token=<token>`. The CLI and Node API read and attach this token for you. See the Security model section below.
+The server requires the per-run token written to `~/h17-webpilot/token`. Pass it as a query parameter on the connection URL, for example `ws://127.0.0.1:7331/?token=<token>`. The CLI and Node API read and attach this token for you. The bundled runtime extension reads the same per-run token from a generated extension-private `token.json` and bypasses extension resource caches when it loads that file. See the Security model section below.
 
 Capability groups:
 - `tabs`
@@ -219,17 +246,21 @@ They are there to show what is configurable. The package does not ship your fina
 ## Tested Browsers
 
 Tested browsers:
-- Chromium
 - Helium
+- Chromium
 - Google Chrome
+
+### Linux Desktop Display
+
+Webpilot launches normal Chromium with an unpacked extension; it does not switch to headless mode. On Linux, if the shell has no `DISPLAY` but `~/.Xauthority` contains a display entry, Webpilot uses the detected desktop display and prints a yellow `[WARN]` showing the `DISPLAY` and `XAUTHORITY` it selected. If no display can be detected, it warns and waits for real readiness to fail instead of claiming the server is ready.
 
 ## Security model
 
 Webpilot is a local tool. The browser, the WebSocket server, and the client all run on the same machine, and the server is built to stay that way.
 
 - Loopback only. The WebSocket server binds to `127.0.0.1`, so it does not accept connections from other machines on the network.
-- Per-run token. Each `webpilot start` generates a fresh token, writes it to `~/h17-webpilot/token`, and refuses any WebSocket connection that does not present it. The CLI, the Node API, and the bundled extension read that token automatically. The token file is local and rotates every run.
-- Origin rejection. The server rejects WebSocket handshakes that carry a browser `Origin` header, so a malicious web page cannot reach the server even from the same machine.
+- Per-run token. Each `webpilot start` generates a fresh token, writes it to `~/h17-webpilot/token`, and refuses any WebSocket connection that does not present it. The CLI, the Node API, and the bundled runtime extension read that token automatically. The extension token config is extension-private, fetched with cache bypass, and rotates every run with the local token.
+- Origin rejection. The server rejects WebSocket handshakes that carry a web-page `Origin` header, so a malicious web page cannot reach the server even from the same machine.
 
 Two behaviors that automated scanners sometimes flag are intentional and central to what the tool does:
 

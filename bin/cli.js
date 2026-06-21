@@ -6,6 +6,9 @@ const readline = require('readline');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { authedWsUrl } = require('../lib/auth');
+const { parseCommandArgv, resolveLine: resolveCliLine } = require('../lib/cli-parser');
+const { waitForReadyServer } = require('../lib/readiness');
 
 function loadFirstRunUtils() {
   try {
@@ -196,7 +199,12 @@ const {
   writeDefaultConfig,
 } = loadFirstRunUtils();
 const { loadConfig } = require('../index');
-const { stopManagedBrowser, normalizeProfilePath } = require('../lib/launcher');
+const {
+  stopManagedBrowser,
+  normalizeProfilePath,
+  resolveBrowserDisplayEnv,
+  formatWarn,
+} = require('../lib/launcher');
 
 // --- ANSI colors ---
 const C = {
@@ -665,7 +673,7 @@ function dotCommand(line) {
       out('');
       out(`${C.bold}Interact${C.reset}`);
       out('  click <sel|handle>   human click');
-      out('  type [sel] <text>    human type (sel: # . [ auto-detected)');
+      out('  type [sel|handle] <text> human type after targeting/focus');
       out('  clear <sel>          clear input');
       out('  key <name>           keyPress (alias: press)');
       out('  cookies load <file>  load cookies from a JSON array file');
@@ -812,122 +820,11 @@ async function dispatchWait(line) {
 
 // Parses a line into { action, params } without sending. Returns null if handled inline.
 function resolveLine(line) {
-  if (line.startsWith('{')) {
-    let msg;
-    try { msg = JSON.parse(line); } catch (e) {
-      out(`${C.red}invalid JSON:${C.reset} ${e.message}`);
-      return null;
-    }
-    return { action: msg.action || '', params: msg.params || {} };
-  }
-
-  // Try shorthands
-  const parts = line.split(/\s+/);
-  const cmd = parts[0].toLowerCase();
-  const rest = parts.slice(1).join(' ');
-
-  switch (cmd) {
-    case 'go': case 'nav': case 'navigate': case 'goto': {
-      if (!rest) return null;
-      let url = rest;
-      if (!url.includes('://')) {
-        url = (url.startsWith('localhost') || url.startsWith('127.0.0.1'))
-          ? 'http://' + url : 'https://' + url;
-      }
-      return { action: 'tabs.navigate', params: { url } };
-    }
-    case 'click':
-      if (!rest) return null;
-      return rest.startsWith('el_')
-        ? { action: 'human.click', params: { handleId: rest } }
-        : { action: 'human.click', params: { selector: rest } };
-    case 'type': {
-      if (!rest) return null;
-      const first = parts[1];
-      if (parts.length > 2 && (first.startsWith('#') || first.startsWith('.') ||
-          first.startsWith('[') || first.includes('='))) {
-        return { action: 'human.type', params: { selector: first, text: parts.slice(2).join(' ') } };
-      }
-      return { action: 'human.type', params: { text: rest } };
-    }
-    case 'sd': {
-      const p = { direction: 'down' };
-      for (const a of parts.slice(1)) {
-        if (/^\d+$/.test(a)) p.amount = parseInt(a, 10);
-        else p.selector = a;
-      }
-      return { action: 'human.scroll', params: p };
-    }
-    case 'su': {
-      const p = { direction: 'up' };
-      for (const a of parts.slice(1)) {
-        if (/^\d+$/.test(a)) p.amount = parseInt(a, 10);
-        else p.selector = a;
-      }
-      return { action: 'human.scroll', params: p };
-    }
-    case 'q': case 'query':
-      if (!rest) return null;
-      return { action: 'dom.queryAllInfo', params: { selector: rest } };
-    case 'wait':
-      if (!rest) return null;
-      return { action: 'dom.waitForSelector', params: { selector: rest } };
-    case 'eval': case 'js': {
-      if (!rest) return null;
-      let fn = rest;
-      if (!fn.startsWith('()') && !fn.startsWith('function')) fn = '() => ' + fn;
-      return { action: 'dom.evaluate', params: { fn } };
-    }
-    case 'title':
-      return { action: 'tabs.getCurrent', params: { __printField: 'title' } };
-    case 'url':
-      return { action: 'tabs.getCurrent', params: { __printField: 'url' } };
-    case 'html':
-      return { action: 'dom.getHTML', params: {} };
-    case 'screenshot': case 'ss':
-      return { action: 'tabs.screenshot', params: {} };
-    case 'reload':
-      return { action: 'tabs.reload', params: {} };
-    case 'back':
-      return { action: 'dom.evaluate', params: { fn: '() => { history.back(); return true; }' } };
-    case 'forward':
-      return { action: 'dom.evaluate', params: { fn: '() => { history.forward(); return true; }' } };
-    case 'clear':
-      if (!rest) return null;
-      return { action: 'human.clearInput', params: { selector: rest } };
-    case 'key': case 'press':
-      if (!rest) return null;
-      return { action: 'dom.keyPress', params: { key: rest } };
-    case 'discover':
-      return { action: 'dom.discoverElements', params: {} };
-    case 'frames':
-      return { action: 'frames.list', params: {} };
-    case 'cookies':
-      if (!rest || rest === 'get') return { action: 'cookies.getAll', params: {} };
-      // cookies load handled specially — fall through
-      return null;
-    case 'box':
-      if (!rest) return null;
-      return rest.startsWith('el_')
-        ? { action: 'dom.boundingBox', params: { handleId: rest } }
-        : { action: 'dom.boundingBox', params: { selector: rest } };
-    default:
-      break;
-  }
-
-  // Not a shorthand — treat as action [params]
-  const spaceIdx = line.indexOf(' ');
-  if (spaceIdx === -1) {
-    return { action: line, params: {} };
-  }
-  const action = line.slice(0, spaceIdx);
-  const paramsStr = line.slice(spaceIdx + 1).trim();
-  try {
-    return { action, params: JSON.parse(paramsStr) };
-  } catch (e) {
-    out(`${C.red}invalid params:${C.reset} ${e.message}`);
-    return null;
-  }
+  return resolveCliLine(line, {
+    onError(label, message) {
+      out(`${C.red}${label}:${C.reset} ${message}`);
+    },
+  });
 }
 
 // --- Main dispatch ---
@@ -970,15 +867,7 @@ function pidFileForPort(port) {
 // ~/h17-webpilot/token) to a WS address. The server requires it; without the
 // file the raw addr is returned so the auth failure surfaces clearly.
 function authedAddr(addr) {
-  let u;
-  try { u = new URL(addr); } catch { return addr; }
-  // Server binds IPv4 loopback; 'localhost' may resolve to ::1 first and miss it.
-  if (u.hostname === 'localhost') u.hostname = '127.0.0.1';
-  try {
-    const token = fs.readFileSync(path.join(CONFIG_DIR, 'token'), 'utf8').trim();
-    if (token) u.searchParams.set('token', token);
-  } catch {}
-  return u.toString();
+  return authedWsUrl(addr);
 }
 
 function getServerPid(addr = 'ws://localhost:7331') {
@@ -994,21 +883,7 @@ function getServerPid(addr = 'ws://localhost:7331') {
 }
 
 function waitForServer(addr, timeoutMs = 15000) {
-  return new Promise((resolve, reject) => {
-    const start = Date.now();
-    function attempt() {
-      const ws = new WebSocket(authedAddr(addr));
-      ws.on('open', () => { ws.close(); resolve(); });
-      ws.on('error', () => {
-        if (Date.now() - start > timeoutMs) {
-          reject(new Error('server did not start in time'));
-          return;
-        }
-        setTimeout(attempt, 300);
-      });
-    }
-    attempt();
-  });
+  return waitForReadyServer(addr, timeoutMs);
 }
 
 function waitForServerStop(addr, pid, timeoutMs = 15000) {
@@ -1041,7 +916,7 @@ function spawnDaemon(addr, startOptions = {}) {
   const child = spawn(process.execPath, daemonArgs, {
     detached: true,
     stdio: 'ignore',
-    env: { ...process.env },
+    env: { ...process.env, ...(startOptions.browserEnv || {}) },
     cwd: process.cwd(),
   });
   child.unref();
@@ -1147,6 +1022,12 @@ async function startServer(addr, startOptions = {}) {
   }
 
   await ensureFirstRunConfig(startOptions);
+
+  const displayEnv = resolveBrowserDisplayEnv({ env: process.env });
+  if (displayEnv.warning) {
+    console.log(formatWarn(displayEnv.warning));
+    startOptions.browserEnv = displayEnv.env;
+  }
 
   console.log(`${C.dim}starting human-browser server...${C.reset}`);
   const pid = spawnDaemon(addr, startOptions);
@@ -1378,11 +1259,12 @@ async function main() {
     } else if (args[i] === '--http') {
       showHttp = true;
       i++;
-    } else if (args[i] === '-c' && args[i + 1]) {
-      cmd = args[i + 1];
-      i += 2;
     } else if (args[i] === '-c') {
-      failCli('-c requires a command');
+      const parsed = parseCommandArgv(args.slice(i + 1));
+      if (!parsed || !parsed.command) failCli('-c requires a command');
+      cmd = parsed.command;
+      if (parsed.showHttp) showHttp = true;
+      i = args.length;
     } else if (args[i] === '--help' || args[i] === '-h') {
       console.log('Usage: webpilot [options] [command]');
       console.log('');

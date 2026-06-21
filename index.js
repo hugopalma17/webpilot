@@ -4,6 +4,7 @@ const os = require('os');
 const crypto = require('crypto');
 const { createServer, log, setLogLevel, initDebugLog, debugLog } = require('./lib/server');
 const { launchBrowser, clearBrowserState } = require('./lib/launcher');
+const { authedWsUrl } = require('./lib/auth');
 const { BridgePage } = require('./client/page');
 const client = require('./client');
 
@@ -495,10 +496,13 @@ async function connectToServer(overrides = {}) {
   const WebSocket = require('ws');
 
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://localhost:${port}`);
+    const ws = new WebSocket(authedWsUrl(`ws://localhost:${port}`));
     let idCounter = 1;
     const pending = new Map();
     const eventListeners = {};
+    const timer = setTimeout(() => {
+      reject(new Error('Connection timeout'));
+    }, 5000);
 
     ws.on('open', async () => {
       const transport = {
@@ -539,11 +543,14 @@ async function connectToServer(overrides = {}) {
         page._currentUrl = targetTab.url;
       }
 
+      clearTimeout(timer);
       resolve(page);
     });
 
-    ws.on('error', reject);
-    setTimeout(() => reject(new Error('Connection timeout')), 5000);
+    ws.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
   });
 }
 

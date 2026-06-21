@@ -11,6 +11,9 @@
 
 # Server + launcher
 !lib/
+!lib/auth.js
+!lib/cli-parser.js
+!lib/readiness.js
 !lib/server.js
 !lib/launcher.js
 !lib/first-run.js
@@ -26,6 +29,7 @@
 # Chrome extension
 !extension/
 !extension/manifest.json
+!extension/runtime-config.js
 !extension/service-worker.js
 !extension/content-script.js
 !extension/icons/
@@ -41,6 +45,9 @@
 !SECURITY.md
 !SKILL.md
 !gemini-extension.json
+!skills/
+!skills/webpilot/
+!skills/webpilot/SKILL.md
 
 # JS CLI
 !bin/

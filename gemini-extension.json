@@ -1,5 +1,5 @@
 {
   "name": "webpilot",
-  "version": "1.3.4",
+  "version": "1.3.6",
   "description": "CDP-free browser automation with human-like behavior. Drive a real browser via WebSocket from any AI agent."
 }

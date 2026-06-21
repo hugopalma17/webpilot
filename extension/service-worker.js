@@ -1,4 +1,6 @@
 // WS endpoint (port + per-run auth token) is read from token.json in connect().
+importScripts("runtime-config.js");
+
 let ws = null;
 let reconnectDelay = 1000;
 let reconnectAttempts = 0;
@@ -40,7 +42,10 @@ async function connect() {
   let token = "";
   let port = 7331;
   try {
-    const cfg = await (await fetch(chrome.runtime.getURL("token.json"))).json();
+    const cfg = await WebpilotRuntimeConfig.loadRuntimeConfig({
+      runtime: chrome.runtime,
+      fetchImpl: (...args) => fetch(...args),
+    });
     token = cfg.token || "";
     if (cfg.port) port = cfg.port;
   } catch (e) {

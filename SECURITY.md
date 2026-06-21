@@ -4,11 +4,13 @@
 
 Webpilot drives a real browser on your machine. It runs three local parts: a Chromium based browser with a bundled extension, a WebSocket server, and a client (the CLI, the Node API, or a raw WebSocket caller). All three are meant to run on the same machine, under the same user.
 
+On Linux desktops, Webpilot may infer `DISPLAY` and `XAUTHORITY` from the user's own `~/.Xauthority` when the launching shell lacks display variables. It prints a yellow `[WARN]` when it does this. This is still normal desktop Chromium with the bundled extension, not headless mode.
+
 The server is designed to stay local and authenticated:
 
 - It binds to `127.0.0.1`, so it is not reachable from other machines on the network.
-- It requires a per-run token. Each `webpilot start` generates a fresh token and writes it to `~/h17-webpilot/token`. Connections without the token are refused. The token rotates on every run.
-- It rejects WebSocket handshakes that carry a browser `Origin` header, so a web page cannot reach the server even from the same machine.
+- It requires a per-run token. Each `webpilot start` generates a fresh token and writes it to `~/h17-webpilot/token`. The bundled runtime extension reads the same token from an extension-private generated config with cache bypass. Connections without the token are refused. The token rotates on every run.
+- It rejects WebSocket handshakes that carry a web-page `Origin` header, so a web page cannot reach the server even from the same machine.
 
 ## Behaviors that look risky but are intended
 
@@ -31,6 +33,12 @@ npm install -g h17-webpilot
 ```
 
 ## Security fixes by version
+
+### 1.3.6
+
+- **WebSocket token delivery hardening**: The CLI, Node API, and runtime extension all attach the per-run token. The extension fetches its generated token config with cache bypass so a rotated token cannot be hidden behind extension resource caching.
+- **Auth regression coverage**: Unit tests cover missing and wrong tokens, web-page Origin rejection, tokened `chrome-extension://` Origins with rotating extension IDs, extension handshakes, and Node API token loading.
+- **Desktop display warning**: Linux desktop display inference prints a yellow `[WARN]` and never falls back to headless mode automatically.
 
 ### 1.3.5
 
