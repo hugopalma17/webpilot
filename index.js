@@ -1,3 +1,9 @@
+// Local browser automation. Drives a Chrome extension over a WebSocket that is
+// bound to 127.0.0.1, gated by a per-run token, and closed to http(s) Origins.
+// Cookie and DOM data move only between this process and the local browser.
+// There is no telemetry, no remote endpoint, and no data leaves the machine.
+// Only dependency is `ws`. Full threat model in SECURITY.md.
+
 const path = require('path');
 const fs = require('fs');
 const os = require('os');

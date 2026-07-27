@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 
+// CLI client. Connects only to the local runtime on 127.0.0.1 using the
+// per-run token from ~/h17-webpilot/token. No remote endpoints, no telemetry.
+
 const WebSocket = require('ws');
 const readline = require('readline');
 const fs = require('fs');

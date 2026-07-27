@@ -1,3 +1,8 @@
+// Runtime half of a local automation tool. Talks only to the paired process on
+// 127.0.0.1, authenticated with the per-run token. Cookie and DOM reads are
+// user-initiated commands and go to that local socket only; there is no remote
+// endpoint and no telemetry. See SECURITY.md.
+
 // WS endpoint (port + per-run auth token) is read from token.json in connect().
 importScripts("runtime-config.js");
 

@@ -1610,6 +1610,60 @@ async function actionHumanClearInput(params) {
   return { cleared: true };
 }
 
+// Reads the result an injected script wrote onto its result element.
+// Sync scripts have already set data-result by the time we look; async ones
+// are caught by the observer. Resolves {result} or {error}, never rejects.
+function awaitScriptResult(callId, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const el = document.getElementById(callId);
+    if (!el) {
+      resolve({ error: "Result element removed" });
+      return;
+    }
+
+    const harvest = () => {
+      const resultAttr = el.getAttribute("data-result");
+      if (resultAttr !== null) {
+        el.remove();
+        try {
+          resolve({ result: JSON.parse(resultAttr).v });
+        } catch {
+          resolve({ result: resultAttr });
+        }
+        return true;
+      }
+      const errorAttr = el.getAttribute("data-error");
+      if (errorAttr !== null) {
+        el.remove();
+        resolve({ error: errorAttr });
+        return true;
+      }
+      return false;
+    };
+
+    // Instant path: synchronous scripts already wrote the result
+    if (harvest()) return;
+
+    // Async path: observe attribute changes on the result element
+    const observer = new MutationObserver(() => {
+      if (harvest()) {
+        observer.disconnect();
+        clearTimeout(timer);
+      }
+    });
+    observer.observe(el, {
+      attributes: true,
+      attributeFilter: ["data-result", "data-error"],
+    });
+
+    const timer = setTimeout(() => {
+      observer.disconnect();
+      el.remove();
+      resolve({ error: "Evaluate timed out" });
+    }, timeoutMs);
+  });
+}
+
 // Message Handler
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -1787,58 +1841,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         document.documentElement.appendChild(script);
         script.remove();
 
-        // Check result — sync scripts already set data-result before we get here.
-        // Async scripts: use MutationObserver for instant notification (no 50ms polling).
-        const pollForResult = (resolve) => {
-          const el = document.getElementById(callId);
-          if (!el) {
-            resolve({ error: "Result element removed" });
-            return;
-          }
-
-          const harvest = () => {
-            const resultAttr = el.getAttribute("data-result");
-            if (resultAttr !== null) {
-              el.remove();
-              try {
-                resolve({ result: JSON.parse(resultAttr).v });
-              } catch {
-                resolve({ result: resultAttr });
-              }
-              return true;
-            }
-            const errorAttr = el.getAttribute("data-error");
-            if (errorAttr !== null) {
-              el.remove();
-              resolve({ error: errorAttr });
-              return true;
-            }
-            return false;
-          };
-
-          // Instant path: synchronous scripts already wrote the result
-          if (harvest()) return;
-
-          // Async path: observe attribute changes on the result element
-          const observer = new MutationObserver(() => {
-            if (harvest()) {
-              observer.disconnect();
-              clearTimeout(timer);
-            }
-          });
-          observer.observe(el, {
-            attributes: true,
-            attributeFilter: ["data-result", "data-error"],
-          });
-
-          const timer = setTimeout(() => {
-            observer.disconnect();
-            el.remove();
-            resolve({ error: "Evaluate timed out" });
-          }, 5000);
-        };
-
-        new Promise(pollForResult).then((res) => {
+        awaitScriptResult(callId).then((res) => {
           if (res.error) sendResponse({ error: res.error });
           else sendResponse({ result: res.result });
         });
@@ -1884,54 +1887,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         document.documentElement.appendChild(script);
         script.remove();
 
-        const pollForResult2 = (resolve) => {
-          const el = document.getElementById(callId);
-          if (!el) {
-            resolve({ error: "Result element removed" });
-            return;
-          }
-
-          const harvest = () => {
-            const resultAttr = el.getAttribute("data-result");
-            if (resultAttr !== null) {
-              el.remove();
-              try {
-                resolve({ result: JSON.parse(resultAttr).v });
-              } catch {
-                resolve({ result: resultAttr });
-              }
-              return true;
-            }
-            const errorAttr = el.getAttribute("data-error");
-            if (errorAttr !== null) {
-              el.remove();
-              resolve({ error: errorAttr });
-              return true;
-            }
-            return false;
-          };
-
-          if (harvest()) return;
-
-          const observer = new MutationObserver(() => {
-            if (harvest()) {
-              observer.disconnect();
-              clearTimeout(timer);
-            }
-          });
-          observer.observe(el, {
-            attributes: true,
-            attributeFilter: ["data-result", "data-error"],
-          });
-
-          const timer = setTimeout(() => {
-            observer.disconnect();
-            el.remove();
-            resolve({ error: "Evaluate timed out" });
-          }, 5000);
-        };
-
-        new Promise(pollForResult2).then((res) => {
+        awaitScriptResult(callId).then((res) => {
           if (res.error) sendResponse({ error: res.error });
           else sendResponse({ result: res.result });
         });
