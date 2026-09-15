@@ -9,6 +9,7 @@
  * Usage:
  *   node test/server.js
  *   node test/all-commands.js
+ *   node test/all-commands.js --scroll-only
  */
 
 const { execFile } = require("child_process");
@@ -16,7 +17,7 @@ const path = require("path");
 
 const CLI = path.join(__dirname, "..", "bin", "cli.js");
 const TIMEOUT = 10000;
-const FIXTURES_URL = "http://localhost:3456/fixtures.html";
+const FIXTURES_URL = process.env.WEBPILOT_FIXTURES_URL || "http://localhost:3456/fixtures.html";
 
 let passed = 0;
 let failed = 0;
@@ -121,6 +122,68 @@ async function goFixtures() {
   assert("fixtures page loaded", out.includes("Test Page") && !hasError(out), out);
 }
 
+async function scrollPosition() {
+  const out = await cli("q #scroll-position");
+  const match = out.match(/window=([\d.]+) panel=([\d.]+)/);
+  if (!match || hasError(out)) throw new Error(`Cannot read scroll position: ${out}`);
+  return { window: Number(match[1]), panel: Number(match[2]) };
+}
+
+async function testScrollBoundaries() {
+  section("SCROLL TARGETS AND BOUNDARIES");
+  for (const axis of ["panel", "window"]) {
+    const url = new URL(FIXTURES_URL);
+    if (axis === "panel") url.searchParams.set("scroll", "panel");
+    url.searchParams.set("lazy", "instant");
+    const navigation = await cli(`go ${url}`);
+    if (hasError(navigation)) throw new Error(navigation);
+    await sleep(500);
+    for (const [command, movement] of [
+      ["sd", 1],
+      ["su", -1],
+      ["sd 500 #nested", 1],
+      ["su 200 #container", -1],
+      ["sd 100000", 1],
+      ["sd 100000", 0],
+      ["su 100000", -1],
+      ["su 100000", 0],
+    ]) {
+      const before = await scrollPosition();
+      const out = await cli(command);
+      const after = await scrollPosition();
+      const delta = after[axis] - before[axis];
+      const other = axis === "window" ? "panel" : "window";
+      assert(`${axis}: ${command} ${movement === 0 ? "returns at boundary" : "moves and returns"}`,
+        !hasError(out) && out.includes(`"scrolled": ${movement !== 0}`) &&
+        (movement === 0 ? Math.abs(delta) <= 1 : delta * movement > 1) &&
+        after[other] === before[other],
+        `${out}\nbefore=${JSON.stringify(before)} after=${JSON.stringify(after)}`);
+      if (command === "sd 100000" && movement === 1) {
+        const loaded = await cli("q #lazy-extra");
+        assert(`${axis}: lazy content loaded during large scroll`,
+          loaded.includes("Additional lazy-loaded content") && !hasError(loaded), loaded);
+      }
+    }
+
+    url.searchParams.set("lazy", "delayed");
+    await cli(`go ${url}`);
+    await sleep(500);
+    const scrolled = await cli("sd 100000");
+    const loading = await cli("q #lazy-target[data-load-state=loading]");
+    assert(`${axis}: returns at current bottom while delayed content is loading`,
+      scrolled.includes('"scrolled": true') && !hasError(scrolled) &&
+      loading.includes("1 match(es)") && !hasError(loading), `${scrolled}\n${loading}`);
+    const loaded = await cli("wait #lazy-extra");
+    if (hasError(loaded)) throw new Error(loaded);
+    const before = await scrollPosition();
+    const continued = await cli("sd 100000");
+    const after = await scrollPosition();
+    assert(`${axis}: another scroll reaches content loaded after the first response`,
+      continued.includes('"scrolled": true') && !hasError(continued) &&
+      after[axis] - before[axis] > 1000, `${continued}\n${JSON.stringify({ before, after })}`);
+  }
+}
+
 async function main() {
   console.log("=== Webpilot CLI Test ===\n");
 
@@ -133,6 +196,11 @@ async function main() {
     process.exit(1);
   }
 
+  await testScrollBoundaries();
+  if (process.argv.includes("--scroll-only")) {
+    console.log(`\n${passed}/${total} passed, ${failed} failed`);
+    process.exit(failed > 0 ? 1 : 0);
+  }
   await goFixtures();
 
   section("HELP AND STATUS");
@@ -221,7 +289,7 @@ async function main() {
   out = await cli("title");
   assert("title still works after reload", out.includes("Example Domain") && !hasError(out), out);
 
-  out = await cli("nav localhost:3456/fixtures.html");
+  out = await cli(`nav ${FIXTURES_URL.replace(/^https?:\/\//, "")}`);
   assert("nav alias handles localhost URLs", !hasError(out), out);
   await sleep(2000);
 

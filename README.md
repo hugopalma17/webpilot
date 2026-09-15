@@ -102,6 +102,12 @@ Core commands:
 - `cookies load <file>`: load cookies from a JSON array file
 - `frames`: list frames
 
+Without a selector, `sd` and `su` scroll the document when it has scrollable
+height; otherwise they use the largest visible scrollable panel. Use a selector
+to choose a specific container. Large amounts stop at the top or bottom while
+preserving the configured random flicks and pauses.
+Content that finishes loading after the command returns needs another scroll.
+
 Single commands can be passed as one quoted command string or as trailing argv after `-c`:
 
 ```bash

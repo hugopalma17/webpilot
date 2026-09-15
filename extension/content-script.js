@@ -1463,6 +1463,37 @@ async function actionHumanType(params) {
 
 // Action: human.scroll — natural scrolling with optional back-scroll
 
+function findDefaultScrollTarget() {
+  const root = document.scrollingElement;
+  if (root && root.scrollHeight > root.clientHeight + 10 &&
+      !["hidden", "clip"].includes(getComputedStyle(root).overflowY)) {
+    return window;
+  }
+
+  // Fixed-height layouts scroll a content panel instead of the document.
+  let target = window;
+  let largestArea = 0;
+  for (const el of document.querySelectorAll("*")) {
+    if (el === root || el.clientHeight === 0 ||
+        el.scrollHeight <= el.clientHeight + 10) continue;
+    const style = getComputedStyle(el);
+    if (!["auto", "scroll"].includes(style.overflowY) ||
+        style.visibility !== "visible" || Number(style.opacity) === 0) continue;
+    const rect = el.getBoundingClientRect();
+    const left = Math.max(0, rect.left);
+    const top = Math.max(0, rect.top);
+    const right = Math.min(window.innerWidth, rect.right);
+    const bottom = Math.min(window.innerHeight, rect.bottom);
+    const area = Math.max(0, right - left) * Math.max(0, bottom - top);
+    if (area <= largestArea) continue;
+    const hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2);
+    if (!hit || !el.contains(hit)) continue;
+    target = el;
+    largestArea = area;
+  }
+  return target;
+}
+
 async function actionHumanScroll(params) {
   const config = params.config || {};
   const flickMin = config.flickMin !== undefined ? config.flickMin : 150;
@@ -1501,12 +1532,20 @@ async function actionHumanScroll(params) {
   } else if (el) {
     target = findScrollableAncestor(el);
   } else {
-    target = window;
+    target = !selector && !params.handleId && ["down", "up"].includes(direction)
+      ? findDefaultScrollTarget()
+      : window;
   }
 
   const before = target === window ? window.scrollY : target.scrollTop;
 
   while (remaining > 0) {
+    const scrollEl = target === window ? document.scrollingElement : target;
+    if (scrollEl && (
+      (direction === "down" && scrollEl.scrollTop + scrollEl.clientHeight >= scrollEl.scrollHeight - 1) ||
+      (direction === "up" && scrollEl.scrollTop <= 1)
+    )) break;
+
     // Determine this flick's amount
     const flickAmount = Math.min(
       remaining,

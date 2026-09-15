@@ -63,6 +63,15 @@
       background: #f9fafb;
     }
 
+    html.scroll-panel, .scroll-panel body {
+      height: 100%;
+      overflow: hidden;
+    }
+
+    .scroll-panel body { margin: 0; box-sizing: border-box; }
+    .scroll-panel #container { height: calc(100vh - 220px); overflow-y: auto; }
+    #scroll-position { position: fixed; bottom: 8px; right: 8px; pointer-events: none; }
+
     .child {
       display: inline-block;
       padding: 4px 8px;
@@ -105,6 +114,7 @@
 </head>
 
 <body>
+  <output id="scroll-position">window=0 panel=0</output>
   <h1 id="title">Human Browser Test Page</h1>
   <p class="intro">Hello world</p>
   <div id="container">
