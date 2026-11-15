@@ -45,12 +45,18 @@ fs.mkdirSync(CONFIG_DIR, { recursive: true });
 // Write PID
 fs.writeFileSync(PID_FILE, String(process.pid));
 
-// Redirect stdout/stderr to log file — open fd synchronously so writes are never lost
+// Redirect stdout/stderr to log file with synchronous writes: the last line before
+// process.exit() (e.g. "failed to start: ...") must reach the file; the CLI reads it.
 const logPath = path.join(CONFIG_DIR, PORT === 7331 ? 'server.log' : `server-${PORT}.log`);
 const logFd = fs.openSync(logPath, 'w');
-const logStream = fs.createWriteStream(null, { fd: logFd });
-process.stdout.write = logStream.write.bind(logStream);
-process.stderr.write = logStream.write.bind(logStream);
+function writeLog(chunk, encoding, callback) {
+  if (typeof encoding === 'function') callback = encoding;
+  try { fs.writeSync(logFd, typeof chunk === 'string' ? chunk : Buffer.from(chunk)); } catch {}
+  if (typeof callback === 'function') callback();
+  return true;
+}
+process.stdout.write = writeLog;
+process.stderr.write = writeLog;
 
 let browserProcess = null;
 let server = null;

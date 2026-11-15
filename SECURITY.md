@@ -4,7 +4,7 @@
 
 Webpilot drives a real browser on your machine. It runs three local parts: a Chromium based browser with a bundled extension, a WebSocket server, and a client (the CLI, the Node API, or a raw WebSocket caller). All three are meant to run on the same machine, under the same user.
 
-On Linux desktops, Webpilot may infer `DISPLAY` and `XAUTHORITY` from the user's own `~/.Xauthority` when the launching shell lacks display variables. It prints a yellow `[WARN]` when it does this. This is still normal desktop Chromium with the bundled extension, not headless mode.
+On Linux desktops, when the launching shell lacks display variables, Webpilot may use the user's own Wayland compositor socket in `XDG_RUNTIME_DIR` (setting `WAYLAND_DISPLAY`), or infer `DISPLAY` and `XAUTHORITY` from the user's own `~/.Xauthority`. It prints a yellow `[WARN]` when it falls back to `~/.Xauthority`. Either way this is still normal desktop Chromium with the bundled extension, not headless mode.
 
 The server is designed to stay local and authenticated:
 

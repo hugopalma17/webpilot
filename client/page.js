@@ -1,5 +1,15 @@
 const { BridgeElement, BridgeJSHandle } = require("./element");
 const { BridgeKeyboard } = require("./keyboard");
+const { navigationError } = require("../lib/cli-output");
+
+// Rejects like Puppeteer's page.goto when the page failed to load (DNS, refused, TLS...).
+// A page still loading after the wait resolves; result.timeout says so.
+function throwIfLoadFailed(result, url) {
+  if (!result || result.success !== false) return;
+  const err = new Error(navigationError(url, result.error));
+  err.code = String(result.error || "").replace(/^net::/, "") || "ERR_FAILED";
+  throw err;
+}
 
 // BridgePage — page wrapper over the WS protocol with legacy compatibility methods
 
@@ -30,14 +40,18 @@ class BridgePage {
   // --- Navigation ---
 
   async goto(url, options = {}) {
-    await this._send("tabs.navigate", { url });
+    const result = await this._send("tabs.navigate", { url });
+    throwIfLoadFailed(result, url);
     const tabs = await this._send("tabs.list");
     const tab = tabs.find((t) => t.id === this._tabId);
     this._currentUrl = tab ? tab.url : url;
+    return result;
   }
 
   async reload() {
-    await this._send("tabs.reload");
+    const result = await this._send("tabs.reload");
+    throwIfLoadFailed(result, null);
+    return result;
   }
 
   url() {

@@ -8,11 +8,12 @@ const config = loadConfig();
 // Kill any previously running instance of this server + stale browsers
 try {
   const myPid = process.pid;
-  const pids = execSync('pgrep -f "node test/server.js"', { encoding: "utf8" })
+  // Anchored to the node binary so a wrapping `bash -c "... node test/server.js"` never matches.
+  const pids = execSync('pgrep -f "^(\\S*/)?node test/server\\.js"', { encoding: "utf8" })
     .trim()
     .split("\n")
     .map(Number)
-    .filter((p) => p !== myPid && p > 0);
+    .filter((p) => p !== myPid && p !== process.ppid && p > 0);
   for (const pid of pids) {
     try {
       process.kill(pid, "SIGKILL");
@@ -89,8 +90,20 @@ async function main() {
     startUrl: `http://localhost:${HTTP_PORT}/`,
   });
 
+  // Pid file the CLI checks, so `webpilot -c` attaches here instead of auto-starting a runtime.
+  const port = config.port || 7331;
+  const pidFile = path.join(require("os").homedir(), "h17-webpilot", port === 7331 ? "server.pid" : `server-${port}.pid`);
+  fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+  fs.writeFileSync(pidFile, String(process.pid));
+  const removePidFile = () => { try { fs.unlinkSync(pidFile); } catch {} };
+  process.on("exit", removePidFile);
+  process.on("SIGTERM", () => {
+    removePidFile();
+    killBrowserAndExit(browserProcess, server, 0);
+  });
+
   console.log(
-    `[test] Browser ready. Run tests with: node test/all-commands.js`,
+    `[test] Browser ready on port ${port}. Run tests with: node test/all-commands.js`,
   );
   console.log(`[test] CSP Test URLs:`);
   console.log(`  - No CSP:     http://localhost:${HTTP_PORT}/`);

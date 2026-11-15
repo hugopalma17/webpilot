@@ -495,11 +495,44 @@ async function actionMouseMoveTo(params) {
 
 // Action: dom.click (with mousedown/mouseup/click dispatch)
 
+function clickPoint(el) {
+  const rect = el.getBoundingClientRect();
+  return {
+    x: cursorX || rect.x + rect.width / 2,
+    y: cursorY || rect.y + rect.height / 2,
+  };
+}
+
+// What a press at (x, y) would hit: { atPoint } or { refusal }.
+function hitAtPoint(el, x, y) {
+  // Dispatch on the element physically under the cursor.
+  // If nothing is at the cursor coordinates, abort — element is not truly visible.
+  const atPoint = document.elementFromPoint(x, y);
+  if (!atPoint) return { refusal: { clicked: false, reason: "nothing-at-point" } };
+
+  // Occlusion check: verify the element at the click point is the intended
+  // target or a descendant/ancestor of it.  If something else (e.g. a
+  // transparent overlay iframe) is on top, refuse the click.
+  if (atPoint !== el && !el.contains(atPoint) && !atPoint.contains(el)) {
+    const occluder = atPoint.tagName.toLowerCase();
+    const occluderInfo = occluder === "iframe"
+      ? `iframe[src=${(atPoint.src || "").slice(0, 80)}]`
+      : `${occluder}.${(atPoint.className || "").toString().split(" ")[0] || "?"}`;
+    return { refusal: { clicked: false, reason: "occluded", detail: occluderInfo } };
+  }
+  return { atPoint };
+}
+
+// Refusal the deferred dispatch would hit, checked before success is reported.
+function clickRefusal(params) {
+  const el = resolveElement(params);
+  const { x, y } = clickPoint(el);
+  return hitAtPoint(el, x, y).refusal || null;
+}
+
 function actionClick(params) {
   const el = resolveElement(params);
-  const rect = el.getBoundingClientRect();
-  const x = cursorX || rect.x + rect.width / 2;
-  const y = cursorY || rect.y + rect.height / 2;
+  const { x, y } = clickPoint(el);
   const clickCount = params.clickCount || 1;
 
   for (let i = 1; i <= clickCount; i++) {
@@ -512,21 +545,9 @@ function actionClick(params) {
       button: 0,
       detail: i,
     };
-    // Dispatch on the element physically under the cursor.
-    // If nothing is at the cursor coordinates, abort — element is not truly visible.
-    const atPoint = document.elementFromPoint(x, y);
-    if (!atPoint) return { clicked: false, reason: "nothing-at-point" };
-
-    // Occlusion check: verify the element at the click point is the intended
-    // target or a descendant/ancestor of it.  If something else (e.g. a
-    // transparent overlay iframe) is on top, refuse the click.
-    if (atPoint !== el && !el.contains(atPoint) && !atPoint.contains(el)) {
-      const occluder = atPoint.tagName.toLowerCase();
-      const occluderInfo = occluder === "iframe"
-        ? `iframe[src=${(atPoint.src || "").slice(0, 80)}]`
-        : `${occluder}.${(atPoint.className || "").toString().split(" ")[0] || "?"}`;
-      return { clicked: false, reason: "occluded", detail: occluderInfo };
-    }
+    const hit = hitAtPoint(el, x, y);
+    if (hit.refusal) return hit.refusal;
+    const atPoint = hit.atPoint;
 
     atPoint.dispatchEvent(new MouseEvent("mousedown", opts));
     if (i === 1) el.focus();
@@ -809,14 +830,47 @@ function applyKeyEffect(target, resolved) {
   }
 }
 
+// Text-like inputs where a real Enter submits the surrounding form.
+const IMPLICIT_SUBMIT_TYPES = new Set([
+  "text", "search", "url", "tel", "email", "password", "number",
+  "date", "month", "week", "time", "datetime-local",
+]);
+
+// Synthetic key events never trigger the browser's implicit form submission, so
+// emulate it: click the form's default submit button, or submit a one-field form.
+function implicitSubmit(target) {
+  if (!(target instanceof HTMLInputElement) || !IMPLICIT_SUBMIT_TYPES.has(target.type)) return false;
+  const form = target.form;
+  if (!form) return false;
+  const elements = Array.from(form.elements);
+  const submitter = elements.find((el) =>
+    (el instanceof HTMLButtonElement && el.type === "submit") ||
+    (el instanceof HTMLInputElement && (el.type === "submit" || el.type === "image")));
+  if (submitter) {
+    if (submitter.disabled) return false;
+    submitter.click();
+    return true;
+  }
+  const fields = elements.filter((el) => el instanceof HTMLInputElement && IMPLICIT_SUBMIT_TYPES.has(el.type));
+  if (fields.length !== 1) return false;
+  form.requestSubmit();
+  return true;
+}
+
 function actionKeyPress(params) {
   const target = document.activeElement || document.body;
   const resolved = resolveKey(params.key);
   const props = buildEventProps(resolved);
-  target.dispatchEvent(new KeyboardEvent("keydown", props));
+  let notCancelled = target.dispatchEvent(new KeyboardEvent("keydown", props));
+  // Real Chrome fires keypress for Enter (unless keydown was cancelled) and submits as its default action.
+  if (resolved.key === "Enter" && notCancelled) {
+    notCancelled = target.dispatchEvent(new KeyboardEvent("keypress", { ...props, charCode: 13 }));
+  }
   applyKeyEffect(target, resolved);
+  // A page that cancels the key (e.g. a typeahead picking a suggestion) keeps the form.
+  const submitted = resolved.key === "Enter" && notCancelled && implicitSubmit(target);
   target.dispatchEvent(new KeyboardEvent("keyup", props));
-  return { pressed: true };
+  return submitted ? { pressed: true, submitted: true } : { pressed: true };
 }
 
 function actionKeyDown(params) {
@@ -1040,8 +1094,9 @@ function checkHoneypot(el) {
   if (el.getAttribute("aria-hidden") === "true")
     return { safe: false, reason: "aria-hidden" };
 
-  // No offsetParent (hidden), unless display:contents
-  if (!hasDisplayContents && el.offsetParent === null)
+  // No offsetParent (hidden), unless display:contents. position:fixed elements have no
+  // offsetParent by spec; hidden ones are caught by the size checks below.
+  if (!hasDisplayContents && el.offsetParent === null && getComputedStyle(el).position !== "fixed")
     return { safe: false, reason: "no-offsetParent" };
 
   // Honeypot class patterns
@@ -1110,6 +1165,9 @@ function isComfortablyInView(rect, vh, vw, config = {}) {
 
   return {
     comfortable: visibleRatio >= minVisibleRatio && centerInsideComfortBand,
+    // Vertical scrolling cannot fix a horizontal miss; the correction loop stops here.
+    verticalOk: centerY >= comfortTop && centerY <= comfortBottom,
+    visible: visibleRatio >= minVisibleRatio,
     visibleRatio,
     centerX,
     centerY,
@@ -1152,11 +1210,23 @@ function findScrollableAncestor(el) {
   return window;
 }
 
+// Inside a position:fixed layer (fixed header, floating button, modal): page scrolling
+// cannot move it, so scrolling toward the comfort band would only move the page.
+function inFixedLayer(el) {
+  for (let node = el; node && node !== document.documentElement; node = node.parentElement) {
+    if (getComputedStyle(node).position === "fixed") return true;
+  }
+  return false;
+}
+
 async function ensureElementVisible(el, params) {
   const config = params?.config || {};
   let rect = el.getBoundingClientRect();
   const vh = window.innerHeight;
   const vw = window.innerWidth;
+  if (inFixedLayer(el) && isComfortablyInView(rect, vh, vw, config).visible) {
+    return { visible: true, rect };
+  }
   const fullyOffScreen =
     rect.bottom < 0 || rect.top > vh || rect.right < 0 || rect.left > vw;
   const comfortState = isComfortablyInView(rect, vh, vw, config);
@@ -1185,7 +1255,7 @@ async function ensureElementVisible(el, params) {
       for (let step = 0; step < maxSteps; step++) {
         rect = el.getBoundingClientRect();
         const comfort = isComfortablyInView(rect, vh, vw, config);
-        if (comfort.comfortable) break;
+        if (comfort.comfortable || comfort.verticalOk) break;
 
         const deltaY = comfort.centerY - comfortTargetY;
         const amount = Math.max(120, Math.min(700, Math.round(Math.abs(deltaY))));
@@ -1210,7 +1280,9 @@ async function ensureElementVisible(el, params) {
       }
     }
     rect = el.getBoundingClientRect();
-    if (!isComfortablyInView(rect, vh, vw, config).comfortable) {
+    // The comfort band picks where to scroll. An element the page cannot bring into
+    // it (left/right edge, short page) is still clickable while it is visible.
+    if (!isComfortablyInView(rect, vh, vw, config).visible) {
       return { visible: false, rect };
     }
   }
@@ -1858,6 +1930,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         const script = document.createElement("script");
         script.textContent = `(function(){
+          document.getElementById('${callId}').setAttribute('data-started', '1');
           try {
             ${markerSetup}
             var __fn = (${params.fn});
@@ -1879,6 +1952,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         })();`;
         document.documentElement.appendChild(script);
         script.remove();
+        // Inline scripts run synchronously on append; no start mark means it was blocked.
+        if (!resultEl.hasAttribute("data-started")) {
+          resultEl.remove();
+          sendResponse({ error: "Inline script did not run (blocked by the page or the browser)" });
+          return;
+        }
 
         awaitScriptResult(callId).then((res) => {
           if (res.error) sendResponse({ error: res.error });
@@ -1904,6 +1983,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const argsJson = JSON.stringify(params.args || []);
         const script = document.createElement("script");
         script.textContent = `(function(){
+          document.getElementById('${callId}').setAttribute('data-started', '1');
           try {
             var __el = document.querySelector('[data-bridge-eval="${markerId}"]');
             if (__el) __el.removeAttribute('data-bridge-eval');
@@ -1925,6 +2005,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         })();`;
         document.documentElement.appendChild(script);
         script.remove();
+        // Inline scripts run synchronously on append; no start mark means it was blocked.
+        if (!resultEl.hasAttribute("data-started")) {
+          resultEl.remove();
+          sendResponse({ error: "Inline script did not run (blocked by the page or the browser)" });
+          return;
+        }
 
         awaitScriptResult(callId).then((res) => {
           if (res.error) sendResponse({ error: res.error });
@@ -2070,6 +2156,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           .then((r) => {
             if (r && r.__dispatchClick) {
               const { __dispatchClick, ...result } = r;
+              const refusal = clickRefusal(params);
+              if (refusal) {
+                sendResponse({ result: refusal });
+                return;
+              }
               sendResponse({ result });
               setTimeout(() => {
                 try { actionClick(params); } catch {}

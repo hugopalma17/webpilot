@@ -17,6 +17,8 @@ const path = require("path");
 
 const CLI = path.join(__dirname, "..", "bin", "cli.js");
 const TIMEOUT = 10000;
+// WEBPILOT_PORT targets a runtime on another port (e.g. an isolated test HOME).
+const PORT_ARGS = process.env.WEBPILOT_PORT ? ["--port", process.env.WEBPILOT_PORT] : [];
 const FIXTURES_URL = process.env.WEBPILOT_FIXTURES_URL || "http://localhost:3456/fixtures.html";
 
 let passed = 0;
@@ -29,7 +31,7 @@ function sleep(ms) {
 
 function cli(cmd) {
   return new Promise((resolve) => {
-    const proc = execFile("node", [CLI, "-c", cmd], {
+    const proc = execFile("node", [CLI, ...PORT_ARGS, "-c", cmd], {
       timeout: TIMEOUT + 2000,
       env: { ...process.env, FORCE_COLOR: "0" },
     });
@@ -49,7 +51,7 @@ function cli(cmd) {
 
 function cliAdmin(args) {
   return new Promise((resolve) => {
-    const proc = execFile("node", [CLI, ...args], {
+    const proc = execFile("node", [CLI, ...PORT_ARGS, ...args], {
       timeout: TIMEOUT + 4000,
       env: { ...process.env, FORCE_COLOR: "0" },
     });
@@ -69,7 +71,7 @@ function cliAdmin(args) {
 
 function cliPipe(lines) {
   return new Promise((resolve) => {
-    const proc = execFile("node", [CLI], {
+    const proc = execFile("node", [CLI, ...PORT_ARGS], {
       timeout: TIMEOUT + 6000,
       env: { ...process.env, FORCE_COLOR: "0" },
     });
@@ -93,6 +95,7 @@ function hasError(output) {
   return (
     output.includes("Extension not connected") ||
     output.includes("error:") ||
+    output.includes("ERROR:") ||
     output.includes("[disconnected]")
   );
 }
@@ -300,6 +303,7 @@ async function main() {
 
   out = await cli("click #btn-visible");
   assert("click visible button succeeds", out.includes('"clicked": true') && !hasError(out), out);
+  assert("click ends with an OK status line", out.trim().endsWith("OK: clicked #btn-visible"), out);
   await sleep(500);
 
   out = await cli("eval document.getElementById('btn-visible').textContent");
@@ -307,6 +311,7 @@ async function main() {
 
   out = await cli("click #btn-opacity");
   assert("click blocks opacity-zero trap", out.includes("opacity-zero") && out.includes('"clicked": false'), out);
+  assert("refused click ends with a plain-English ERROR", out.includes("ERROR: Did not click #btn-opacity: it is fully transparent"), out);
 
   out = await cli("click #btn-aria");
   assert("click blocks aria-hidden trap", out.includes("aria-hidden") && out.includes('"clicked": false'), out);
@@ -377,8 +382,9 @@ async function main() {
   assert("lazy GitHub button navigates after ajax load", out.includes("github.com/hugopalma17/webpilot") && !hasError(out), out);
 
   out = await cli("back");
-  assert("back returns from lazy GitHub navigation", !hasError(out), out);
-  await sleep(2000);
+  assert("back returns from lazy GitHub navigation", !hasError(out) && out.includes("OK: went back"), out);
+  out = await cli("url");
+  assert("back from a CSP-strict page really went back", out.includes(FIXTURES_URL.replace(/^https?:\/\//, "").split("?")[0]), out);
 
   section("VERIFY");
 
@@ -416,6 +422,58 @@ async function main() {
     assert("box by handle succeeds", out.includes('"x"') && !hasError(out), out);
   }
 
+  section("EDGES");
+
+  await goFixtures();
+  out = await cli(`eval document.body.insertAdjacentHTML("beforeend", '<button id="wp-edge" style="position:absolute;left:4px;top:40vh;z-index:9999" onclick="this.textContent=\\'edge clicked\\'">edge</button><button id="wp-fixed" style="position:fixed;right:24px;bottom:24px;z-index:9999" onclick="this.textContent=\\'fixed clicked\\'">fixed</button>')`);
+  out = await cli("click #wp-edge");
+  assert("visible button at the window edge is clickable", out.trim().endsWith("OK: clicked #wp-edge"), out);
+  await sleep(300);
+  out = await cli("eval document.getElementById('wp-edge').textContent");
+  assert("edge button received the click", out.includes("edge clicked"), out);
+  out = await cli("sd 600");
+  out = await cli("eval Math.round(window.scrollY)");
+  const scrollBeforeFixed = (out.match(/^(\d+)$/m) || [])[1];
+  out = await cli("click #wp-fixed");
+  assert("position:fixed button is clickable", out.trim().endsWith("OK: clicked #wp-fixed"), out);
+  const afterFixed = await cli("eval Math.round(window.scrollY)");
+  assert("clicking a fixed button does not scroll the page", !!scrollBeforeFixed && (afterFixed.match(/^(\d+)$/m) || [])[1] === scrollBeforeFixed, `${scrollBeforeFixed} -> ${afterFixed}`);
+  await sleep(300);
+  out = await cli("eval document.getElementById('wp-fixed').textContent");
+  assert("fixed button received the click", out.includes("fixed clicked"), out);
+
+  section("FORMS");
+
+  // Forms are injected at runtime so the fixture layout (scroll tests) stays unchanged.
+  await goFixtures();
+  out = await cli(`eval document.body.insertAdjacentHTML("afterbegin", '<form id="wp-form" action="/fixtures.html"><input id="wp-q" name="q" type="search"><button type="submit">Go</button></form><form id="wp-form2" action="/fixtures.html"><input id="wp-c" name="c"><input id="wp-c2" name="c2"></form>')`);
+  assert("test forms injected", !hasError(out), out);
+
+  out = await cli("type #wp-c two");
+  out = await cli("key Enter");
+  assert("Enter in a two-field form without a submit button does not submit", out.trim().endsWith("OK: pressed Enter"), out);
+
+  out = await cli(`eval document.getElementById("wp-q").addEventListener("keydown", (e) => { if (e.key === "Enter" && !window.__allowEnter) e.preventDefault(); })`);
+  out = await cli("type #wp-q hello");
+  out = await cli("key Enter");
+  assert("Enter cancelled by the page does not submit", out.trim().endsWith("OK: pressed Enter"), out);
+  out = await cli("url");
+  assert("cancelled Enter stays on the page", !out.includes("q=hello"), out);
+
+  out = await cli("eval window.__allowEnter = true");
+  out = await cli(`eval document.getElementById("wp-q").addEventListener("keypress", (e) => { if (e.key === "Enter" && !window.__allowKeypress) e.preventDefault(); })`);
+  out = await cli("key Enter");
+  assert("Enter cancelled in keypress does not submit", out.trim().endsWith("OK: pressed Enter"), out);
+
+  out = await cli("eval window.__allowKeypress = true");
+  out = await cli("key Enter");
+  assert("Enter in a form field submits the form", out.includes("OK: pressed Enter and submitted the form"), out);
+  await sleep(1500);
+  out = await cli("url");
+  assert("form submission navigated with the typed value", out.includes("q=hello"), out);
+
+  await goFixtures();
+
   section("RAW MODE");
 
   out = await cli("framework.getConfig {}");
@@ -431,7 +489,25 @@ async function main() {
   section("ERRORS");
 
   out = await cli("dom.evaluate not-json");
-  assert("invalid params reports an error", out.includes("invalid params"), out);
+  assert("invalid params reports an error", out.includes("ERROR:") && out.includes("must be JSON"), out);
+
+  out = await cli("click");
+  assert("missing target fails at once instead of hanging", out.includes("ERROR: click needs a target"), out);
+
+  out = await cli("clik #btn-visible");
+  assert("unknown command is reported", out.includes('ERROR: Unknown command "clik"'), out);
+
+  out = await cli("wait #never-there 300");
+  assert("wait timeout is an ERROR with its duration", out.includes("ERROR: #never-there did not appear within 0.3 seconds"), out);
+
+  out = await cli("go https://webpilot-test.invalid");
+  assert("failed page load is an ERROR", out.includes("ERROR: Could not load https://webpilot-test.invalid: the domain name could not be found"), out);
+
+  out = await cli(`go ${FIXTURES_URL.replace("fixtures.html", "does-not-exist.html")}`);
+  assert("HTTP 404 is an ERROR that names the status", out.includes("but the server answered HTTP 404 (Not Found)"), out);
+
+  out = await cli("go htp://example.com");
+  assert("mistyped scheme fails at once with a suggestion", out.includes("ERROR: go cannot open \"htp:\" URLs") && out.includes("Did you mean https://example.com?"), out);
 
   console.log(`\n${"=".repeat(50)}`);
   console.log(`  ${passed}/${total} passed, ${failed} failed`);

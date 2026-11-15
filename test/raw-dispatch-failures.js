@@ -187,9 +187,9 @@ async function main() {
     "DEMONSTRATES: el.click() bypasses the overlay entirely (wrong element receives event)",
   );
 
-  // CONTRAST: human.click moves cursor to the target's coordinates.
-  // document.elementFromPoint at those coords returns the overlay, so the
-  // overlay receives the event — matching what a real user click would do.
+  // CONTRAST: human.click moves the cursor to the target's coordinates, finds the
+  // overlay there (document.elementFromPoint) and refuses with reason "occluded"
+  // (since v1.2.2). Neither element is clicked, and the response says so.
   await nav(page);
   await page.evaluate(() => {
     window.__underClicked  = 0;
@@ -197,12 +197,17 @@ async function main() {
     document.getElementById("btn-under-overlay").addEventListener("click", () => { window.__underClicked++; });
     document.getElementById("btn-overlay").addEventListener("click",       () => { window.__overlayClicked++; });
   });
-  await page.humanClick(await page.$("#btn-under-overlay"));
+  const overlayResult = await page.humanClick(await page.$("#btn-under-overlay"));
+  await new Promise((r) => setTimeout(r, 300));
   const underHuman   = await page.evaluate(() => window.__underClicked);
   const overlayHuman = await page.evaluate(() => window.__overlayClicked);
   assert(
-    overlayHuman > 0,
-    "CONTRAST:     human.click dispatches on overlay (element physically at those coordinates)",
+    overlayResult && overlayResult.clicked === false && overlayResult.reason === "occluded",
+    "CONTRAST:     human.click reports the covered target as refused (occluded)",
+  );
+  assert(
+    overlayHuman === 0,
+    "CONTRAST:     human.click does NOT fire on the covering overlay",
   );
   assert(
     underHuman === 0,
@@ -324,8 +329,8 @@ async function main() {
   section("9 · STRICT CSP KILLS CODE INJECTION  (dom.evaluate)");
 
   // Sections 1-8 needed dom.evaluate to work.
-  // Under strict CSP, new Function() is blocked in MAIN world and the
-  // ISOLATED fallback also returns null — injection is dead.
+  // Under strict CSP, new Function() is blocked in MAIN world and in the ISOLATED
+  // fallback, so injection is dead and dom.evaluate says so (it used to return null).
   for (const { url, label } of [
     { url: FIXTURES_STRICT,   label: "strict CSP (no unsafe-eval, no unsafe-inline)" },
     { url: FIXTURES_UNSAFE_I, label: "unsafe-inline CSP (has unsafe-inline, lacks unsafe-eval)" },
@@ -334,11 +339,16 @@ async function main() {
     await page.waitForSelector("#ready");
     await new Promise((r) => setTimeout(r, 150));
 
-    // dom.evaluate in MAIN world is blocked
-    const evalResult = await page.evaluate(() => document.querySelector("#btn-visible") ? "found" : "missing");
+    // dom.evaluate is blocked in every world, and reports the CSP instead of a silent null
+    let evalOutcome;
+    try {
+      evalOutcome = await page.evaluate(() => document.querySelector("#btn-visible") ? "found" : "missing");
+    } catch (err) {
+      evalOutcome = err;
+    }
     assert(
-      evalResult === null,
-      `DEMONSTRATES: dom.evaluate returns null under ${label}`,
+      evalOutcome instanceof Error && /unsafe-eval|Content Security Policy|CSP/.test(evalOutcome.message),
+      `DEMONSTRATES: dom.evaluate is refused with a CSP error under ${label}`,
     );
 
     // human.click still works (ISOLATED world, no eval needed)
