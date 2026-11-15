@@ -174,39 +174,27 @@ async function handleCommand(msg) {
         index: t.index,
       }));
     }
-    case "tabs.navigate": {
-      await chrome.tabs.update(tabId, { url: params.url });
-      // Wait for page load
-      return new Promise((resolve) => {
-        const listener = (id, info) => {
-          if (id === tabId && info.status === "complete") {
-            chrome.tabs.onUpdated.removeListener(listener);
-            resolve({ success: true });
-          }
-        };
-        chrome.tabs.onUpdated.addListener(listener);
-        // Timeout after 30s
-        setTimeout(() => {
-          chrome.tabs.onUpdated.removeListener(listener);
-          resolve({ success: true, timeout: true });
-        }, 30000);
-      });
-    }
-    case "tabs.reload": {
-      await chrome.tabs.reload(tabId);
-      return new Promise((resolve) => {
-        const listener = (id, info) => {
-          if (id === tabId && info.status === "complete") {
-            chrome.tabs.onUpdated.removeListener(listener);
-            resolve({ success: true });
-          }
-        };
-        chrome.tabs.onUpdated.addListener(listener);
-        setTimeout(() => {
-          chrome.tabs.onUpdated.removeListener(listener);
-          resolve({ success: true, timeout: true });
-        }, 30000);
-      });
+    case "tabs.navigate":
+      return waitForTabLoad(tabId, () => chrome.tabs.update(tabId, { url: params.url }), 30000);
+    case "tabs.reload":
+      return waitForTabLoad(tabId, () => chrome.tabs.reload(tabId), 30000);
+    // history.back()/forward() injected as a function (no eval, so page CSP does not
+    // apply). chrome.tabs.goBack is unusable here: Chrome skips history entries made
+    // without user activation, which is every entry under automation.
+    case "tabs.goBack":
+    case "tabs.goForward": {
+      const back = action === "tabs.goBack";
+      return waitForHistoryNavigation(tabId, async () => {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId },
+            func: (goBack) => (goBack ? history.back() : history.forward()),
+            args: [back],
+          });
+        } catch {
+          await (back ? chrome.tabs.goBack(tabId) : chrome.tabs.goForward(tabId));
+        }
+      }, params.timeout || 30000);
     }
     case "tabs.create": {
       const tab = await chrome.tabs.create({
@@ -222,23 +210,8 @@ async function handleCommand(msg) {
       await chrome.tabs.update(tabId, { active: true });
       return { success: true };
     }
-    case "tabs.waitForNavigation": {
-      const timeout = params.timeout || 30000;
-      return new Promise((resolve) => {
-        const listener = (id, info) => {
-          if (id === tabId && info.status === "complete") {
-            chrome.tabs.onUpdated.removeListener(listener);
-            clearTimeout(timer);
-            resolve({ success: true });
-          }
-        };
-        chrome.tabs.onUpdated.addListener(listener);
-        const timer = setTimeout(() => {
-          chrome.tabs.onUpdated.removeListener(listener);
-          resolve({ success: true, timeout: true });
-        }, timeout);
-      });
-    }
+    case "tabs.waitForNavigation":
+      return waitForTabLoad(tabId, null, params.timeout || 30000);
     case "tabs.setViewport": {
       const tab = await chrome.tabs.get(tabId);
       await chrome.windows.update(tab.windowId, {
@@ -292,6 +265,8 @@ async function handleCommand(msg) {
         try {
           return await executeInPage(tabId, params.fn, params.args || []);
         } catch (err) {
+          // The script already ran (or its page unloaded); re-running it elsewhere would repeat side effects.
+          if (err.navigatedAway || err.scriptRan) throw err;
           mainErr = err;
           // MAIN world failed (likely CSP) — fall back to ISOLATED
           console.log("[bridge] MAIN world evaluate failed, falling back to ISOLATED:", mainErr.message);
@@ -355,7 +330,9 @@ async function handleCommand(msg) {
           "dom.elementEvaluate",
           params,
         );
-      } catch {
+      } catch (err) {
+        if (err.navigatedAway) throw err;
+        if (!SCRIPT_NOT_RUN.test(err.message)) throw scriptRanError(err.message);
         // Fall back to MAIN world via marker
         const markerId =
           "be_" + Date.now() + "_" + Math.floor(Math.random() * 1e6);
@@ -405,6 +382,168 @@ async function handleCommand(msg) {
   }
 }
 
+// Waits for the tab's main frame to finish loading. Listeners attach before
+// start() runs so a fast load is not missed. Resolves { success: true },
+// { success: true, timeout: true } while still loading, or
+// { success: false, error: "net::ERR_..." } when the page failed to load.
+// With start (navigate/reload): a load that never commits within the timeout is
+// { success: false, error: "net::ERR_TIMED_OUT" }, an abort not followed by another
+// navigation within 2 s (download, OS-handled scheme) is net::ERR_ABORTED, and the
+// main-frame HTTP status is reported as `status`.
+function waitForTabLoad(tabId, start, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let navError = null;
+    let committed = false;
+    let status = null;
+    let timer = null;
+    let abortTimer = null;
+
+    const isMain = (d) => d.tabId === tabId && d.frameId === 0;
+    const loaded = () => (status ? { success: true, status } : { success: true });
+    const cleanup = () => {
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.webNavigation.onErrorOccurred.removeListener(onError);
+      chrome.webNavigation.onBeforeNavigate.removeListener(onBefore);
+      chrome.webNavigation.onCommitted.removeListener(onCommitted);
+      chrome.webRequest.onHeadersReceived.removeListener(onHeaders);
+      clearTimeout(timer);
+      clearTimeout(abortTimer);
+    };
+    const finish = (result) => {
+      cleanup();
+      resolve(result);
+    };
+    const onBefore = (details) => {
+      if (isMain(details)) clearTimeout(abortTimer);
+    };
+    const onCommitted = (details) => {
+      if (!isMain(details)) return;
+      committed = true;
+      clearTimeout(abortTimer);
+    };
+    const onHeaders = (details) => {
+      if (details.tabId === tabId && details.type === "main_frame") status = details.statusCode;
+    };
+    const onError = (details) => {
+      if (!isMain(details)) return;
+      if (details.error === "net::ERR_ABORTED") {
+        // Superseded navigations start again at once; downloads and OS-handled schemes do not.
+        if (start) {
+          clearTimeout(abortTimer);
+          abortTimer = setTimeout(() => {
+            if (!committed) finish({ success: false, error: details.error });
+          }, 2000);
+        }
+        return;
+      }
+      navError = details.error;
+    };
+    const onUpdated = (id, info) => {
+      if (id !== tabId || info.status !== "complete") return;
+      finish(navError ? { success: false, error: navError } : loaded());
+    };
+
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.webNavigation.onErrorOccurred.addListener(onError);
+    chrome.webNavigation.onBeforeNavigate.addListener(onBefore);
+    chrome.webNavigation.onCommitted.addListener(onCommitted);
+    chrome.webRequest.onHeadersReceived.addListener(onHeaders, { urls: ["<all_urls>"], types: ["main_frame"], tabId });
+    timer = setTimeout(() => {
+      if (navError) finish({ success: false, error: navError });
+      else if (start && !committed) finish({ success: false, error: "net::ERR_TIMED_OUT", timeout: true });
+      else finish({ ...loaded(), timeout: true });
+    }, timeoutMs);
+
+    if (start) {
+      Promise.resolve()
+        .then(start)
+        .catch((err) => {
+          cleanup();
+          reject(err);
+        });
+    }
+  });
+}
+
+// Waits for a history move in the main frame. Same-document entries (hash, pushState)
+// finish at once; cross-document ones wait for the load. No navigation starting within
+// 1.5 s means there was no entry to move to.
+function waitForHistoryNavigation(tabId, start, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let started = false;
+    let navError = null;
+    const timers = [];
+    const isMain = (d) => d.tabId === tabId && d.frameId === 0;
+    const onStart = (d) => { if (isMain(d)) started = true; };
+    const onSameDocument = (d) => { if (isMain(d)) finish({ success: true }); };
+    const onCompleted = (d) => { if (isMain(d)) finish(navError ? { success: false, error: navError } : { success: true }); };
+    const onError = (d) => {
+      if (!isMain(d) || d.error === "net::ERR_ABORTED") return;
+      navError = d.error;
+    };
+    const onUpdated = (id, info) => {
+      if (id === tabId && started && info.status === "complete") {
+        finish(navError ? { success: false, error: navError } : { success: true });
+      }
+    };
+    const events = [
+      [chrome.webNavigation.onBeforeNavigate, onStart],
+      [chrome.webNavigation.onCommitted, onStart],
+      [chrome.webNavigation.onReferenceFragmentUpdated, onSameDocument],
+      [chrome.webNavigation.onHistoryStateUpdated, onSameDocument],
+      [chrome.webNavigation.onCompleted, onCompleted],
+      [chrome.webNavigation.onErrorOccurred, onError],
+      [chrome.tabs.onUpdated, onUpdated],
+    ];
+    function cleanup() {
+      for (const [event, fn] of events) event.removeListener(fn);
+      timers.forEach(clearTimeout);
+    }
+    function finish(result) {
+      cleanup();
+      resolve(result);
+    }
+    for (const [event, fn] of events) event.addListener(fn);
+    timers.push(setTimeout(() => { if (!started) finish({ success: false, error: "no-history" }); }, 1500));
+    timers.push(setTimeout(() => finish(navError ? { success: false, error: navError } : { success: true, timeout: true }), timeoutMs));
+    Promise.resolve()
+      .then(start)
+      .catch((err) => {
+        cleanup();
+        reject(err);
+      });
+  });
+}
+
+// executeScript never settles when its page is replaced mid-script; settle as
+// navigated away once the tab's main frame commits a new document.
+function untilNavigation(tabId, promise, action) {
+  return new Promise((resolve, reject) => {
+    const onCommitted = (details) => {
+      if (details.tabId !== tabId || details.frameId !== 0) return;
+      cleanup();
+      reject(navigatedAwayError(action));
+    };
+    const cleanup = () => chrome.webNavigation.onCommitted.removeListener(onCommitted);
+    chrome.webNavigation.onCommitted.addListener(onCommitted);
+    promise.then(
+      (value) => { cleanup(); resolve(value); },
+      (err) => { cleanup(); reject(err); },
+    );
+  });
+}
+
+// Errors that prove the script never started, so another strategy may run it.
+const SCRIPT_NOT_RUN = /Inline script did not run|Receiving end does not exist|Could not establish connection|No response from content script|Cannot access|Frame with ID|No tab with id|extensions gallery|Missing host permission/i;
+const SCRIPT_CSP_BLOCKED = /unsafe-eval|EvalError|Refused to evaluate|Content Security Policy/i;
+
+// The user's script started in the page; falling back would run it a second time.
+function scriptRanError(message) {
+  const err = new Error(/timed out/i.test(message) ? message : `The script threw an error: ${message}`);
+  err.scriptRan = true;
+  return err;
+}
+
 // Execute JS in the page via inline <script> injection.
 // Works on CSP sites that allow 'unsafe-inline' (most do) without needing eval/new Function.
 // Falls back to chrome.scripting.executeScript MAIN world for sites without inline restriction.
@@ -424,31 +563,61 @@ async function executeInPage(tabId, fnString, args, markerId) {
     );
     return result;
   } catch (scriptErr) {
-    // Inline script blocked or failed — try direct executeScript
+    if (scriptErr.navigatedAway) throw scriptErr;
+    if (!SCRIPT_NOT_RUN.test(scriptErr.message)) throw scriptRanError(scriptErr.message);
+    // Inline script blocked or content script unreachable — try direct executeScript
   }
 
   // Strategy 2: chrome.scripting.executeScript in MAIN world (needs 'unsafe-eval' in page CSP)
   try {
-    const results = await chrome.scripting.executeScript({
+    const results = await untilNavigation(tabId, chrome.scripting.executeScript({
       target: { tabId },
       world: "MAIN",
+      // executeScript swallows exceptions (result null), so report outcomes in an envelope.
       func: (fnStr, args, markerId) => {
+        const message = (e) => String((e && e.message) || e);
+        let fn;
+        try {
+          fn = new Function("return (" + fnStr + ")")();
+        } catch (e) {
+          return { __wp: e instanceof EvalError ? "blocked" : "error", message: message(e) };
+        }
         let el;
         if (markerId) {
           el = document.querySelector(`[data-bridge-eval="${markerId}"]`);
-          if (!el) throw new Error("Marked element not found");
+          if (!el) return { __wp: "error", message: "Marked element not found" };
           el.removeAttribute("data-bridge-eval");
         }
-        const fn = new Function("return (" + fnStr + ")")();
-        return markerId ? fn(el, ...(args || [])) : fn(...(args || []));
+        try {
+          const value = markerId ? fn(el, ...(args || [])) : fn(...(args || []));
+          if (value && typeof value.then === "function") {
+            return Promise.resolve(value).then(
+              (v) => ({ __wp: "ok", value: v }),
+              (e) => ({ __wp: "error", message: message(e) }),
+            );
+          }
+          return { __wp: "ok", value };
+        } catch (e) {
+          return { __wp: "error", message: message(e) };
+        }
       },
       args: [fnString, args || [], markerId || null],
-    });
+    }), "dom.evaluate");
     if (results && results.length) {
       if (results[0].error) throw new Error(results[0].error.message);
-      return results[0].result;
+      const envelope = results[0].result;
+      if (envelope && envelope.__wp === "ok") return envelope.value;
+      if (envelope && envelope.__wp === "error") throw scriptRanError(envelope.message);
+      if (envelope && envelope.__wp === "blocked") throw new Error(`EvalError: ${envelope.message}`);
+      return envelope;
     }
-  } catch {}
+  } catch (err) {
+    if (err && (err.navigatedAway || err.scriptRan)) throw err;
+    const message = (err && err.message) || String(err);
+    if (!SCRIPT_CSP_BLOCKED.test(message) && !SCRIPT_NOT_RUN.test(message)) {
+      throw scriptRanError(message);
+    }
+  }
 
   throw new Error(
     "Evaluate failed: page CSP blocks both inline scripts and eval",
@@ -457,7 +626,7 @@ async function executeInPage(tabId, fnString, args, markerId) {
 
 // Execute JS in MAIN world, detect and mark DOM element results for handle registration
 async function executeHandleInPage(tabId, fnString, args, elementMarkers = []) {
-  const results = await chrome.scripting.executeScript({
+  const results = await untilNavigation(tabId, chrome.scripting.executeScript({
     target: { tabId },
     world: "MAIN",
     func: (fnStr, args, elementMarkers) => {
@@ -510,7 +679,7 @@ async function executeHandleInPage(tabId, fnString, args, elementMarkers = []) {
       return { __type: "value", value: result };
     },
     args: [fnString, args, elementMarkers],
-  });
+  }), "dom.evaluateHandle");
   if (!results || !results.length)
     throw new Error("executeScript returned no results");
   if (results[0].error)
@@ -613,6 +782,29 @@ async function ensureContentScript(tabId) {
   }
 }
 
+// Actions that change the page. If the page unloads mid-command they already ran,
+// so they must not be replayed on the next document.
+const PAGE_CHANGING_ACTIONS = new Set([
+  "human.click", "human.type", "human.scroll", "human.clearInput",
+  "dom.click", "dom.type", "dom.keyPress", "dom.keyDown", "dom.keyUp",
+  "dom.scroll", "dom.setValue", "dom.focus", "dom.mouseMoveTo", "dom.uploadFile",
+]);
+// Scripts can have side effects too; their return value is lost on unload.
+const SCRIPT_ACTIONS = new Set([
+  "dom.evaluateViaScript", "dom.evaluateIsolated", "dom.elementEvaluate",
+]);
+
+// The message reached the page, then the document unloaded before it answered.
+function isChannelClosed(message) {
+  return /closed before a response was received|message channel is closed|back\/forward cache/i.test(message || "");
+}
+
+function navigatedAwayError(action) {
+  const err = new Error(`The page navigated away while ${action} was running, so its result was lost.`);
+  err.navigatedAway = true;
+  return err;
+}
+
 function forwardToContentScript(tabId, action, params) {
   // Default to main frame (frameId: 0), but allow targeting iframes via params.frameId
   const opts = { frameId: (params && params.frameId != null) ? params.frameId : 0 };
@@ -624,15 +816,34 @@ function forwardToContentScript(tabId, action, params) {
       __frameworkConfig: providedFrameworkConfig || frameworkConfig,
     },
   };
+
+  // Returns true when the lastError was settled here (no retry allowed).
+  function settleClosedChannel(message, resolve, reject) {
+    if (!isChannelClosed(message)) return false;
+    if (SCRIPT_ACTIONS.has(action)) {
+      reject(navigatedAwayError(action));
+      return true;
+    }
+    if (PAGE_CHANGING_ACTIONS.has(action)) {
+      resolve({ navigatedAway: true, confirmed: false });
+      return true;
+    }
+    return false;
+  }
+
   return new Promise((resolve, reject) => {
     chrome.tabs.sendMessage(tabId, payload, opts, async (response) => {
       if (chrome.runtime.lastError) {
-        // Content script not loaded — inject and retry once
+        const firstError = chrome.runtime.lastError.message;
+        if (settleClosedChannel(firstError, resolve, reject)) return;
+        // Content script not loaded (or a read-only action lost its page) — inject and retry once
         await ensureContentScript(tabId);
         await new Promise((r) => setTimeout(r, 100));
         chrome.tabs.sendMessage(tabId, payload, opts, (retryResponse) => {
           if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
+            const retryError = chrome.runtime.lastError.message;
+            if (settleClosedChannel(retryError, resolve, reject)) return;
+            reject(new Error(retryError));
             return;
           }
           if (!retryResponse) {

@@ -104,7 +104,9 @@ module.exports = {
       thinkDelayMin: 35, // example defaults
       thinkDelayMax: 90,
       maxShiftPx: 50, // abort click if element moves more than this during think time
-      minVisibleRatio: 0.75, // "in view" means most of the element is actually visible
+      minVisibleRatio: 0.75, // click once this share of the element is on screen
+      // Comfort band: where scrolling tries to place the element before clicking. An
+      // element the page cannot bring into it (window edge, short page) is still clicked.
       comfortTopRatio: 0.18,
       comfortBottomRatio: 0.82,
       comfortLeftRatio: 0.06,

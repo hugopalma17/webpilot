@@ -98,7 +98,7 @@ webpilot start
 
 If no config exists, the first run detects installed browsers, **prompts you to choose one**, and writes `~/h17-webpilot/config.js`.
 
-> **Running under an agent or in CI?** That prompt needs a TTY. An agent shell cannot answer it, and the symptom is `Extension not connected`. Either run `webpilot start` once in a normal terminal to generate the config, or write the config yourself before first start:
+> **Running under an agent or in CI?** That prompt needs a TTY. In a non-interactive shell with several browsers installed, `webpilot start` stops with `ERROR: Several browsers are installed ...` and lists them. Name one and the config is written without a prompt: `webpilot start -d --browser /usr/bin/chromium`. You can also run `webpilot start` once in a normal terminal, or write the config yourself before first start:
 >
 > ```bash
 > mkdir -p ~/h17-webpilot
@@ -114,7 +114,7 @@ If no config exists, the first run detects installed browsers, **prompts you to 
 
 Use `webpilot start -d` for an append-only session log (`~/h17-webpilot/webpilot.log` by default).
 
-`webpilot start` is idempotent — if the runtime is already up it exits cleanly without disturbing state. It prints `server ready on ws://localhost:7331 (pid <N>)` when both the runtime and the browser are ready. Wait for that line before issuing commands.
+`webpilot start` is idempotent: if a runtime is already up, answering, and using the same config, it is reused without disturbing the browser. It restarts only when a different `--config` or `--browser` is requested, the config file changed since it started, or the browser stopped answering, and it says which. `webpilot restart` forces a fresh start. It ends with `OK: webpilot is running and ready ...` once a command has round-tripped through the browser. Wait for that line before issuing commands.
 
 ### Recommended browser setup
 
@@ -142,7 +142,7 @@ Everything else behaves identically. This is the self-hosted path for CI, scrape
 
 ### Linux desktop display detection
 
-On Linux, if the shell has no `DISPLAY` but `~/.Xauthority` contains a display entry, Webpilot uses the detected desktop display and prints a yellow `[WARN]` showing the `DISPLAY` and `XAUTHORITY` it selected. If no display can be detected, it warns and waits for real readiness to fail rather than claiming the server is ready.
+On Linux, a session with `DISPLAY` (X11) or `WAYLAND_DISPLAY` (Wayland) set is used as-is. Agent shells often have neither while a compositor is running, with or without a monitor attached; Webpilot then finds the compositor's `wayland-N` socket in `XDG_RUNTIME_DIR` and uses it. Failing that, if `~/.Xauthority` contains a display entry, Webpilot uses that display and prints a yellow `[WARN]` showing the `DISPLAY` and `XAUTHORITY` it selected. With no graphical session at all, it warns with the `xvfb-run` fix and lets readiness fail rather than claiming the server is ready.
 
 ## Quick start
 
@@ -161,36 +161,53 @@ Use the same loop every time:
 2. **Act** — `click`, `type`, `go`
 3. **Verify** — `wait`, `url`, `q`
 
-Do not guess selectors when `discover` can tell you the real ones, and do not assume a click worked. `click` returns `{ "clicked": true|false }`; a `false` is a refusal to respect, not an obstacle to brute-force through.
+Do not guess selectors when `discover` can tell you the real ones, and do not assume a click worked. A refused click ends with `ERROR: Did not click ...` and the reason (covered, invisible, a bot trap); that is a refusal to respect, not an obstacle to brute-force through.
 
 ## CLI
 
 ```bash
 webpilot -c "go example.com"    # single command, preferred for scripts and agents
+webpilot go example.com         # same; -c is optional
 webpilot                        # manual/debug REPL
-webpilot start                  # launch browser + WS server
+webpilot start                  # launch browser + WS server (reuses a ready one)
 webpilot start -d               # launch with session logging
+webpilot restart                # stop, then start again
 webpilot stop                   # stop running server
 ```
+
+**Every command ends with one status line.** Output comes first, then:
+
+| Final line | Meaning | Exit code |
+|---|---|---|
+| `OK` / `OK: <summary>` | it worked (`OK: clicked #submit`, `OK: loaded https://example.com`) | 0 |
+| `OK (unconfirmed): <why>` | the action reached the page, but the page navigated away before it could confirm | 0 |
+| `ERROR: <reason>` | it did not work, in plain English, with what to do next | 1 |
+
+A `[WARN]` line before it flags something that did not stop the command, such as `dom.setValue` or `dom.type` skipping the human pipeline. Every command is bounded, so there is no need to wrap calls in `timeout` or `sleep` waiting for a confirmation: the status line is the confirmation. In pipe mode each command gets its own status line, and the exit code is 1 if any of them failed.
 
 **Core commands**
 
 | Command | Does |
 |---|---|
-| `go <url>` | navigate |
+| `go <url>` | open a page; `ERROR` on a bad address, an unreachable server (30 s) or an HTTP 4xx/5xx answer |
+| `back` / `forward` | move through the tab's history (works on CSP-strict pages) |
 | `discover` | list interactive elements with handles |
 | `q <selector>` / `query <selector>` | query elements |
-| `wait <selector>` | wait for a selector |
+| `wait <selector> [ms]` | wait for a selector (default 5000 ms, max 60000) |
 | `click <selector\|handleId>` | safe click |
 | `type [selector\|handleId] <text>` | target, focus, then type with the configured profile |
-| `clear <selector>` | clear an input |
-| `key <name>` / `press <name>` | send a key |
+| `clear <selector\|handleId>` | clear an input |
+| `key <name>` / `press <name>` | send a key; `Enter` in a form field submits the form like a real key press |
 | `sd [px] [selector]` / `su [px] [selector]` | scroll down / up |
 | `html` | read page HTML |
 | `ss` | screenshot — for when layout is the question, not structure |
 | `cookies` | dump cookies |
 | `cookies load <file>` | load cookies from a JSON array file |
 | `frames` | list frames |
+| `title` / `url` | current tab title / URL |
+| `eval <js>` | run a JavaScript expression in the page (blocked on many sites by CSP; it says so) |
+| `dump` | save cookies, screenshot and HTML to `dump_<ts>/` |
+| `.tabs` / `.tab <n>` | list tabs / switch to tab `n` |
 
 Without a selector, `sd` and `su` scroll the document when it has scrollable
 height; otherwise they use the largest visible scrollable panel. Use a selector
@@ -198,15 +215,15 @@ to choose a specific container. Large amounts stop at the top or bottom while
 preserving the configured random flicks and pauses.
 Content that finishes loading after the command returns needs another scroll.
 
-Single commands can be passed as one quoted string or as trailing argv after `-c`:
+Quote the command whenever it contains a selector. Unquoted, the shell gets it first: `#submit` starts a comment, `[type=submit]` and `*` are globs, `>` redirects:
 
 ```bash
+webpilot -c "click #submit"
 webpilot -c "type el_2 hello world"
-webpilot -c type el_2 hello world
 webpilot -c .http go https://example.com
 ```
 
-Quote typed text only when quote characters are part of what you want typed.
+Everything after the target in `type` is typed as-is, including quote characters.
 
 `.http` toggles response-event printing. In the REPL it persists for that session; for one-shot commands prefix each invocation, since every `-c` call is its own client process. Most useful around navigation and page-load commands — it is also the cheapest way to read a site's own JSON API instead of scraping its DOM.
 
@@ -225,11 +242,12 @@ A wrapper over the same WebSocket protocol.
 const { startWithPage } = require('h17-webpilot');
 
 const { page } = await startWithPage();
-await page.navigate('https://example.com');
-await page.query('h1');
-await page.click('h1');
-await page.waitFor('body');
+await page.navigate('https://example.com'); // rejects if the page fails to load
+const intro = await page.query('p');
+const html = await page.read();
 ```
+
+`navigate()`/`goto()` and `reload()` reject when the page fails to load (DNS, refused connection, TLS, no answer within 30 s), with `err.code` such as `ERR_NAME_NOT_RESOLVED`. They resolve with `{ success, status }` otherwise; an HTTP error status is reported, not thrown, as in Puppeteer. `evaluate()` rejects with the CSP error on pages that block every evaluation route.
 
 | Method | Legacy alias |
 |---|---|
@@ -348,8 +366,9 @@ The user or LLM decides the workflow. Webpilot provides the browser runtime and 
 
 - Defaults are for demonstration and development, not behavior parity.
 - The user or LLM still has to choose selectors, waits, retries, and verification steps.
-- `dom.evaluate` may hit CSP restrictions on some sites. DOM reading and interaction still work through the isolated content-script path.
-- No headless mode. A server needs `xvfb-run` or an equivalent display.
+- `dom.evaluate` is blocked on sites whose CSP forbids page scripts and eval; it then fails with an error naming the CSP. DOM reading, clicking, typing, scrolling and `back`/`forward` still work through the extension.
+- No headless mode. A machine with a desktop or compositor session works with or without a monitor; a server with no graphical session needs `xvfb-run`.
+- One runtime per machine. Runtimes on different ports share `~/h17-webpilot/token` and the extension's `token.json`, so starting a second one breaks the first.
 
 ## Tested browsers
 
@@ -357,7 +376,7 @@ Helium · Chromium · Google Chrome
 
 ## Skill usage
 
-[`SKILL.md`](SKILL.md) explains how an LLM should use Webpilot as a browser tool.
+[`skills/webpilot/SKILL.md`](skills/webpilot/SKILL.md) explains how an LLM should use Webpilot as a browser tool.
 
 ## License
 

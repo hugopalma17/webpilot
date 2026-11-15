@@ -15,13 +15,33 @@ It gives you a local browser runtime, a CLI, and a WebSocket command surface. Yo
 
 **Do not default to screenshots.** Webpilot exposes the live DOM directly. Screenshots are slow, expensive, and unnecessary for most tasks. Use `html`, `discover`, and `q` to read page state. Reserve `ss` for cases where layout or visual rendering is the actual question.
 
+## Reading Results
+
+Every `webpilot` command prints its output, then **one final status line**, and exits:
+
+| Final line | Meaning | Exit code |
+|---|---|---|
+| `OK` or `OK: <summary>` | it worked, e.g. `OK: clicked #submit`, `OK: loaded https://example.com` | 0 |
+| `OK (unconfirmed): <why>` | the action reached the page, but the page navigated away before it could confirm; check `url` or `html` before repeating it | 0 |
+| `ERROR: <reason>` | it did not work; the reason is plain English and says what to do next | 1 |
+
+A `[WARN] ...` line above the status line flags something worth knowing that did not stop the command (for example, a raw action that skipped the human pipeline).
+
+The status line is the confirmation. Run commands directly and read the last line: do not wrap them in `timeout`, `sleep`, or polling loops waiting for a confirmation. Every command is bounded; one that gets no answer from the browser ends with an `ERROR` saying so (30 seconds by default, longer only when you pass a longer `timeout`).
+
 ## First Run (mandatory bootstrap, do this in order, every session)
 
 Webpilot launches a real Chromium-based browser with its extension auto-injected via `--load-extension`. The extension dials back to the token-authenticated local runtime (a Node process listening on `ws://localhost:7331`). All of this is configured by `~/h17-webpilot/config.js`. The very first run on a new machine is **interactive** because it has to detect installed browsers and ask the user which one to use. That interactivity is the single most common reason new users hit `Extension not connected` from inside an agent.
 
 When first-run setup asks for a browser, ask whether the user plans to browse manually while Webpilot runs. If yes, recommend a dedicated Webpilot browser, not the user's daily browser. Good splits include Helium/Chrome, Chromium/Chrome, Edge/Chrome, or Vivaldi/Chrome.
 
-On Linux/XFCE-style desktops, the agent shell may not inherit `DISPLAY`. Webpilot can infer `DISPLAY`/`XAUTHORITY` from the user's `~/.Xauthority`; when it does, it prints a yellow `[WARN]` and still launches normal Chromium, not headless mode. If X auth is stale or missing, readiness will fail instead of printing `server ready`.
+Webpilot always drives a real browser window; there is no headless mode. Any graphical session works: macOS, Windows, Linux on X11 or Wayland. A monitor is not required: on a machine running a desktop or Wayland compositor with no screen attached, the browser renders into the compositor as usual, and Webpilot finds the compositor's display on its own even when the agent shell has no `DISPLAY` or `WAYLAND_DISPLAY`. Only a server with no graphical session at all needs an emulated one:
+
+```bash
+xvfb-run -a webpilot start -d
+```
+
+`webpilot start` prints a warning naming this fix when it cannot find any graphical session.
 
 ### Step 1 — Verify CLI installed
 
@@ -42,7 +62,8 @@ test -f ~/h17-webpilot/config.js || test -f ~/h17-webpilot/config.json && echo "
 ```
 
 - If the output is `config ok`, skip to Step 3.
-- If the output is `config missing`, **stop and ask the user to complete first-run setup in a real terminal**, because the prompt requires interactive input that this agent shell cannot provide. Surface this verbatim:
+- If the output is `config missing` and the user has already told you which browser to use, you can create the config without the prompt: `webpilot start -d --browser /path/to/browser`.
+- Otherwise **stop and ask the user to complete first-run setup in a real terminal**, because the prompt requires interactive input that this agent shell cannot provide. Surface this verbatim:
 
 > **First-run setup needed (one-time per machine).**
 >
@@ -58,15 +79,15 @@ After the user confirms, re-check Step 2 and proceed.
 
 ### Step 3 — Start the runtime and WAIT for it to be ready
 
-At the beginning of a fresh task/session, run this before `webpilot -c ...` commands unless you have already verified the runtime is ready in the current thread. Do not restart an already-ready runtime just to be tidy; that disrupts browser state.
+Run this at the beginning of every session:
 
 ```bash
 webpilot start -d
 ```
 
-**Run `start` bare — never pipe it through `head`/`tail`/etc.** The server attaches to that stdout; when the pager closes the pipe, SIGPIPE kills it (it then restarts on every later `-c` call, breaking the session).
+It is safe to run when Webpilot is already up: a runtime that is running, answering, and using the same config is reused, not restarted, so open tabs and logins are kept. It restarts only when it has to: a different `--config` or `--browser` was requested, the config file changed since it started, or the browser stopped answering. The output says which. To force a fresh browser, run `webpilot restart`.
 
-**Wait for the command to return.** It prints `server ready on ws://localhost:7331 (pid <N>)` only after the authenticated local runtime has successfully round-tripped a command through the injected extension. Do not fire any `webpilot -c ...` command until this line appears. Step 4 is still the quick visible verification before doing page work.
+**Wait for the command to return.** It ends with `OK: webpilot is running and ready ...` (or `... already running and ready ...`) only after a command has round-tripped through the browser extension. Do not send browser commands before that line. If it ends with `ERROR:`, read the reason; it says what to fix.
 
 `-d` writes an append-only session log to `~/h17-webpilot/webpilot.log` (configurable via `framework.debug.sessionLogPath`). Always pass `-d` so the log exists if you need to debug later.
 
@@ -76,31 +97,29 @@ webpilot start -d
 webpilot -c .tabs
 ```
 
-- If this returns a list of open tabs (or an empty array), you are ready. Proceed to the rest of this skill.
-- If this returns **`Extension not connected`** after Steps 1–3 all succeeded, the launched browser process probably failed to start or crashed. **Do not retry, do not loop.** Surface this to the user:
+- If it lists the open tabs and ends with `OK`, you are ready. Proceed to the rest of this skill.
+- If it ends with **`ERROR: The browser extension is not connected ...`** after Steps 1–3 succeeded, the launched browser probably failed to start or crashed. **Do not retry, do not loop.** Surface this to the user:
 
-> The webpilot runtime is up but the browser it tried to launch did not connect back. Likely cause: the browser binary path in `~/h17-webpilot/config.js` no longer exists (browser was uninstalled, moved, or updated to a new path). Open the config and verify the `browser:` field points to a real executable. If it does, share the contents of `~/h17-webpilot/webpilot.log` so we can see what the launcher reported.
+> The webpilot runtime is up but the browser it tried to launch did not connect back. Likely cause: the browser binary path in `~/h17-webpilot/config.js` no longer exists (browser was uninstalled, moved, or updated to a new path). Open the config and verify the `browser:` field points to a real executable. If it does, share `~/h17-webpilot/server.log`, which holds what the launcher reported.
 
 Wait for the user to fix or confirm before retrying.
 
-## `-c` Command Form
+## Command Form
 
-Prefer unquoted trailing argv for simple commands:
-
-```bash
-webpilot -c type el_2 hello world
-webpilot -c click el_1
-webpilot -c go https://example.com
-```
-
-Quoted whole-command form is also supported when it helps the shell preserve selectors or special characters:
+Pass one browser command per call, wrapped in double quotes:
 
 ```bash
-webpilot -c "type #input hello world"
-webpilot -c "click button[type=submit]"
+webpilot -c "click #submit"
+webpilot -c "type #search hello world"
+webpilot -c "go https://example.com"
+webpilot -c html
 ```
 
-Do not add shell quotes around typed text unless the literal quote characters should be typed into the page. Single-word commands can omit quotes: `webpilot -c html`, `webpilot -c discover`, `webpilot -c ss`.
+Quote anything with a selector in it. Unquoted, the shell eats it before Webpilot sees it: `#submit` starts a shell comment, `[type=submit]` and `*` are glob patterns, and `>` redirects output to a file. Single words such as `html`, `discover`, `ss`, `url` need no quotes.
+
+`-c` is optional: `webpilot go example.com` is the same as `webpilot -c "go example.com"`.
+
+Everything after the target in `type` is typed as-is, including any quote characters.
 
 ## Operating Loop
 
@@ -122,8 +141,7 @@ Use these first:
 - `webpilot -c "wait <selector>"` — wait for a known state change
 - `webpilot -c ss` — screenshot; use when layout/visual rendering is the question, or to verify when DOM/URL state is ambiguous ("did that take?")
 - `webpilot -c dump` — one-shot capture of the **whole page** to `dump_<ts>/` (page.html + screenshot.png + cookies.json) for offline grep; best when a page is large or DOM-hostile
-- `.http` in the interactive REPL — toggle response-event printing for the rest of that CLI session
-- `webpilot -c .http go <url>` — enable response-event printing for that one-shot page load/navigation command; useful when the DOM fights back and structured responses are available
+- `webpilot -c .http go <url>` — also print the HTTP responses the page loads (method, status, URL); useful when the DOM fights back and the site has its own JSON API
 
 ## Act
 
@@ -131,25 +149,14 @@ Use the safest matching action:
 
 - `webpilot -c "click <selector|handleId>"`
 - `webpilot -c "type <selector|el_handle> <text>"`
-- `webpilot -c "clear <selector>"`
-- `webpilot -c "key <name>"`
+- `webpilot -c "clear <selector|el_handle>"`
+- `webpilot -c "key <name>"` — `Enter`, `Tab`, `Escape`, `Backspace`, `ArrowDown`, ... `Enter` in a form field submits the form like a real key press; the status line then says `submitted the form`, and the next page may still be loading, so `wait` for something on it
 - `webpilot -c "sd [px] [selector]"`
 - `webpilot -c "su [px] [selector]"`
 - `webpilot -c "go <url>"`
+- `webpilot -c back` / `webpilot -c forward` — move through the tab's history
+- `webpilot -c .tabs`, then `webpilot -c ".tab <n>"` — switch to another tab (for example one a link opened); later commands act on it
 - `webpilot -c "cookies load ./cookies.json"` — when the task requires restoring an existing session
-
-`-c` accepts both a quoted whole command and unquoted trailing argv. These are equivalent:
-
-```bash
-webpilot -c "type el_2 hello world"
-webpilot -c type el_2 hello world
-```
-
-Do not add shell quotes around typed text unless the literal quote characters should be typed into the page. `.http` toggles for the rest of an interactive REPL session. For one-shot `-c` invocations, prefix the command after `-c` because the client process exits when the command finishes; this is most useful for navigation/page-load activity:
-
-```bash
-webpilot -c .http go https://example.com
-```
 
 **`type` targets + chaining (v1.3.3+):** `type` takes a CSS **selector** (first char `#`/`.`/`[`, or contains `=`) **or** an `el_*` **handle** as its first token. Given either, `human.type` **chains the cursor-move + click + focus itself** — no preceding `click` needed:
 
@@ -158,17 +165,17 @@ webpilot -c "type .search-input hello world"   # selector — chains click+focus
 webpilot -c "type el_42 hello world"            # handle (v1.3.3+) — same chain
 ```
 
-Caveats: a bare tag selector (`input.foo`, no leading `#`/`.`/`[`) is treated as **literal text**, not a selector — always lead with `#`/`.`/`[`. `type` **appends** to existing content; `clear` the field first for a fresh value. (Pre-v1.3.3 the CLI typed handles literally and a manual `click` was required.)
+Caveats: a bare tag selector (`input.foo`, no leading `#`/`.`/`[`) is treated as **literal text**, not a selector — always lead with `#`/`.`/`[`. When that happens the status line says so: `OK: typed "input.foo hello" into the focused element (no target given ...)`. `type` **appends** to existing content; `clear` the field first for a fresh value.
 
 **`click` accepts both** handle IDs and CSS selectors. Always `discover` or `q` immediately before interacting so handles and selectors are fresh.
 
-`click` goes through the human action pipeline. If the runtime refuses the action, respect the refusal and re-inspect the page.
+`click` goes through the human action pipeline. It refuses targets that are covered, invisible, or look like bot traps, and says why: `ERROR: Did not click #submit: another element is covering it (div.cookie-banner) ...`. Respect the refusal: re-inspect the page and deal with what is in the way (close the banner, scroll, pick the visible control) instead of retrying the same click.
 
 ## Verify
 
 After navigation or interaction, confirm the new state:
 
-- `webpilot -c "wait <selector>"`
+- `webpilot -c "wait <selector>"` — waits up to 5 seconds; `wait <selector> 15000` waits longer (max 60000 ms)
 - `webpilot -c url`
 - `webpilot -c title`
 - `webpilot -c html`
@@ -178,10 +185,10 @@ After navigation or interaction, confirm the new state:
 
 - Never guess selectors when `html` or `discover` can tell you the real ones.
 - Never assume a click worked. Verify it.
-- Never treat `{ "clicked": false }` as something to brute-force through.
+- Never brute-force through a refused click (`ERROR: Did not click ...`).
 - Never confuse DOM reading with interaction. Read first, then act.
 - Re-query stale handles instead of reusing them blindly.
-- Do not use `eval` — it hits CSP on most sites.
+- Prefer `html`, `q` and `discover` over `eval`: many sites block page scripts, and `eval` then ends with an `ERROR` naming the CSP.
 
 ## Raw Protocol
 
@@ -202,29 +209,12 @@ webpilot -c "{\"action\": \"tabs.navigate\", \"params\": {\"url\": \"https://exa
 ## Strategy Notes
 
 - Use `html`, `discover`, and `q` for DOM inspection (avoid `eval` due to CSP).
-- Use `wait` after page-changing actions.
+- Navigate like a person: open the site with `go`, then move through it by clicking links, menus and buttons. Jumping between deep URLs with repeated `go` is not how people browse, and it skips the pages that set up state (cookies, redirects, consent).
+- `go` ends with an `ERROR` when the page did not really load: a bad address, an unreachable server (after 30 seconds), or an HTTP error status such as 403, 404 or 429. Read the reason before retrying; a 403 or 429 usually means slow down or stop.
+- Use `wait` after page-changing actions. `go` already waits for the page to load; if it reports the page was still loading after 30 seconds, `wait` for the element you need.
 - `click` and `type` both accept a selector or an `el_*` handle (v1.3.3+); both chain the human click. `type` selectors must lead with `#`/`.`/`[`.
 - Use screenshots when layout or visibility is the uncertainty, not HTML structure.
 - If the task needs a preloaded authenticated session, load cookies first or use config boot commands.
-
-## MCP Server
-
-An MCP adapter is available for environments that support the Model Context Protocol (e.g. Claude Desktop, Cursor, Windsurf).
-
-Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "webpilot": {
-      "command": "npx",
-      "args": ["webpilot-mcp"]
-    }
-  }
-}
-```
-
-The MCP server connects to the same WebSocket runtime (`ws://localhost:7331`). Start the runtime first with `webpilot start`, then the MCP tools become available in the host application automatically.
 
 ## Limits
 

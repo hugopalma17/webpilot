@@ -1,9 +1,13 @@
 const { start, killBrowserAndExit, AgentPage } = require('../index');
 const { exec } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 
 const CLI = path.join(__dirname, '..', 'bin', 'cli.js');
 const TIMEOUT = 8000;
+// WEBPILOT_TEST_BROWSER / WEBPILOT_PORT run this off macOS or next to another runtime.
+const BROWSER = process.env.WEBPILOT_TEST_BROWSER || '/Applications/Helium.app/Contents/MacOS/Helium';
+const PORT_ARG = process.env.WEBPILOT_PORT ? `--port ${process.env.WEBPILOT_PORT} ` : '';
 
 let _server, _browserProcess;
 let passed = 0, failed = 0, total = 0;
@@ -11,7 +15,7 @@ let passed = 0, failed = 0, total = 0;
 // Run a CLI command via -c flag, return stdout
 function cli(cmd) {
   return new Promise((resolve) => {
-    const proc = exec(`node "${CLI}" -c "${cmd}"`, {
+    const proc = exec(`node "${CLI}" ${PORT_ARG}-c "${cmd}"`, {
       timeout: TIMEOUT + 2000,
       env: { ...process.env, FORCE_COLOR: '0' },
     });
@@ -51,9 +55,18 @@ async function main() {
   };
 
   const { server, transport, browserProcess, config } = await start({
-    browser: '/Applications/Helium.app/Contents/MacOS/Helium',
+    browser: BROWSER,
+    ...(process.env.WEBPILOT_PORT ? { port: Number(process.env.WEBPILOT_PORT) } : {}),
     human: { calibrated: false },
   });
+
+  // Pid file the CLI checks, so the -c calls below attach to this runtime.
+  const os = require('os');
+  const port = config.port || 7331;
+  const pidFile = path.join(os.homedir(), 'h17-webpilot', port === 7331 ? 'server.pid' : `server-${port}.pid`);
+  fs.mkdirSync(path.dirname(pidFile), { recursive: true });
+  fs.writeFileSync(pidFile, String(process.pid));
+  process.on('exit', () => { try { fs.unlinkSync(pidFile); } catch {} });
   console.log = originalConsoleLog;
   _server = server;
   _browserProcess = browserProcess;
@@ -64,11 +77,24 @@ async function main() {
     startupLogs.join('\n'),
   );
 
-  // Navigate to example.com via transport (setup)
+  // Local fixture page: no dependency on outside sites (example.com asks not to be used for tests).
+  const http = require('http');
+  const fixtureServer = http.createServer((req, res) => {
+    fs.readFile(path.join(__dirname, 'fixtures.html'), (err, data) => {
+      if (err) { res.writeHead(404); res.end(); return; }
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(data);
+    });
+  });
+  await new Promise((r) => fixtureServer.listen(0, '127.0.0.1', r));
+  fixtureServer.unref();
+  const FIXTURE_HOST = `127.0.0.1:${fixtureServer.address().port}`;
+  const FIXTURE_URL = `http://${FIXTURE_HOST}/fixtures.html`;
+
   const tabs = await transport.send('tabs.list');
   const tab = tabs.find((t) => !t.url.startsWith('chrome'));
-  if (tab) await transport.send('tabs.navigate', { url: 'https://example.com' }, tab.id);
-  else await transport.send('tabs.navigate', { url: 'https://example.com' });
+  if (tab) await transport.send('tabs.navigate', { url: FIXTURE_URL }, tab.id);
+  else await transport.send('tabs.navigate', { url: FIXTURE_URL });
 
   // Wait for page load
   await new Promise((r) => setTimeout(r, 2000));
@@ -78,8 +104,17 @@ async function main() {
   const page = new AgentPage(transport);
   if (tab) page.setTabId(tab.id);
 
+  let gotoError = null;
+  try {
+    await page.goto('https://webpilot-test.invalid/');
+  } catch (err) {
+    gotoError = err;
+  }
+  assert('page.goto rejects when the page fails to load', gotoError && gotoError.code === 'ERR_NAME_NOT_RESOLVED' && gotoError.message.includes('domain name could not be found'), String(gotoError));
+  await page.goto(FIXTURE_URL);
+
   const html = await page.read();
-  assert('AgentPage.read alias returns HTML', html.includes('Example Domain'), html);
+  assert('AgentPage.read alias returns HTML', html.includes('Human Browser Test Page'), html);
 
   const heading = await page.query('h1');
   assert('AgentPage.query alias returns an element', !!heading, String(heading));
@@ -92,7 +127,7 @@ async function main() {
 
   // .tabs — list tabs
   let out = await cli('.tabs');
-  assert('.tabs lists open tabs', out.includes('example.com'), out);
+  assert('.tabs lists open tabs', out.includes(FIXTURE_HOST) && out.trim().endsWith('OK'), out);
 
   // discover — find interactive elements
   out = await cli('discover');
@@ -101,26 +136,27 @@ async function main() {
 
   // q — query selector
   out = await cli('q h1');
-  assert('q h1 finds heading', out.includes('match') || out.includes('el_'), out);
+  assert('q h1 finds heading', out.includes('1 match') && out.includes('el_'), out);
 
-  out = await cli('q a');
-  assert('q a finds links', out.includes('match') || out.includes('el_'), out);
+  out = await cli('q button');
+  assert('q button finds buttons', /\b[0-9]+ match/.test(out) && out.includes('el_'), out);
 
   // title
   out = await cli('title');
-  assert('title returns page title', out.includes('Example Domain'), out);
+  assert('title returns page title', out.includes('Test Page') && out.trim().endsWith('OK'), out);
 
   // url
   out = await cli('url');
-  assert('url returns current URL', out.includes('example.com'), out);
+  assert('url returns current URL', out.includes(FIXTURE_URL), out);
 
   // eval
-  out = await cli('eval document.querySelectorAll("p").length');
-  assert('eval runs JS and returns result', /[0-9]+/.test(out), out);
+  // cli() wraps the command in shell double quotes, so the JS uses single quotes.
+  out = await cli("eval document.querySelectorAll('p').length");
+  assert('eval runs JS and returns result', /^[0-9]+$/m.test(out) && out.trim().endsWith('OK'), out);
 
   // html
   out = await cli('html');
-  assert('html returns page HTML', out.includes('<h1>') || out.includes('Example Domain'), out);
+  assert('html returns page HTML', out.includes('Human Browser Test Page'), out);
 
   // box — bounding box
   out = await cli('box h1');
@@ -131,8 +167,8 @@ async function main() {
   assert('screenshot saves file', out.includes('screenshot') && out.includes('.png'), out);
 
   // go — navigate
-  out = await cli('go example.com');
-  assert('go navigates to URL', out.includes('tabs.navigate'), out);
+  out = await cli(`go ${FIXTURE_HOST}/fixtures.html`);
+  assert('go navigates to URL', out.includes('tabs.navigate') && out.includes(`OK: loaded ${FIXTURE_URL}`), out);
 
   // reload
   out = await cli('reload');
@@ -147,7 +183,7 @@ async function main() {
 
   // q after reload
   out = await cli('q h1');
-  assert('q works after reload', out.includes('match') || out.includes('el_'), out);
+  assert('q works after reload', out.includes('1 match') && out.includes('el_'), out);
 
   // cookies
   out = await cli('cookies');
@@ -171,7 +207,7 @@ async function main() {
 
   // Raw protocol command
   out = await cli('dom.getHTML {}');
-  assert('raw protocol command works', out.includes('Example Domain') || out.includes('html'), out);
+  assert('raw protocol command works', out.includes('Human Browser Test Page'), out);
 
   // --- Summary ---
   console.log(`\n--- ${passed}/${total} passed, ${failed} failed ---\n`);

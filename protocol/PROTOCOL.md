@@ -7,10 +7,12 @@ The protocol tells the browser what to do. It does not decide the task. The user
 ## Connection
 
 ```text
-WebSocket: ws://localhost:7331
+WebSocket: ws://127.0.0.1:7331/?token=<token>
 ```
 
-The local server listens on this port. The extension connects on launch. Your client connects to the same server.
+The local server listens on 127.0.0.1 (the port is `port` in the config). Every connection must carry the per-run token that `webpilot start` writes to `~/h17-webpilot/token`; connections without it, or with a web-page `Origin`, are refused. The extension connects on launch with the same token. Your client connects to the same server.
+
+Events (see below) arrive on the same socket, interleaved with responses; match responses by `id`.
 
 ## Message Format
 
@@ -39,6 +41,18 @@ or:
 ```json
 { "id": "same-id", "error": "error message" }
 ```
+
+#### Page navigated away mid-command
+
+When the page unloads while a page-changing action is running (`human.*`, `dom.click`, `dom.type`, `dom.keyPress`/`keyDown`/`keyUp`, `dom.scroll`, `dom.setValue`, `dom.focus`, `dom.mouseMoveTo`, `dom.uploadFile`), the action already reached the page, so it is not replayed on the new page. The result is:
+
+```json
+{ "navigatedAway": true, "confirmed": false }
+```
+
+Scripts (`dom.evaluate`, `dom.elementEvaluate`) answer with an error whose message contains `navigated away`: the script ran, but its return value is lost. They are not re-run in another world.
+
+`dom.evaluate` falls back to another strategy (inline script, then `chrome.scripting` in MAIN, then the isolated world) only when the previous one provably did not run the script (blocked by CSP or unreachable). A script that ran and threw answers with `The script threw an error: <message>`.
 
 ### Events
 ```json
@@ -106,12 +120,13 @@ Rules:
 | Action | Params | Returns |
 |--------|--------|---------|
 | `tabs.list` | `{}` | `[{ id, url, title, active, windowId, index }]` |
-| `tabs.navigate` | `{ url }` | `{ success: true }` |
+| `tabs.navigate` | `{ url }` | `{ success: true, status? }` (`status`: main-frame HTTP status); `{ success: true, timeout: true }` if the page committed but was still loading after 30 s; `{ success: false, error: "net::ERR_..." }` if it failed to load, including `net::ERR_TIMED_OUT` (`timeout: true`) when nothing committed in 30 s and `net::ERR_ABORTED` when the navigation was cancelled and nothing replaced it (download, OS-handled scheme) |
 | `tabs.create` | `{ url? }` | `{ id, url, title }` |
 | `tabs.close` | `{}` | `{ success: true }` |
 | `tabs.activate` | `{}` | `{ success: true }` |
-| `tabs.reload` | `{}` | `{ success: true }` |
-| `tabs.waitForNavigation` | `{ timeout? }` | `{ success: true }` |
+| `tabs.reload` | `{}` | same as `tabs.navigate` |
+| `tabs.goBack` / `tabs.goForward` | `{ timeout? }` | `{ success: true }` (also `timeout: true`); `{ success: false, error: "no-history" }` when there is no entry to move to |
+| `tabs.waitForNavigation` | `{ timeout? }` | same as `tabs.navigate`; `timeout: true` means no load finished in time |
 | `tabs.setViewport` | `{ width, height }` | `{ success: true }` |
 | `tabs.screenshot` | `{ fullPage? }` | `{ dataUrl }` |
 
@@ -144,7 +159,7 @@ Rules:
 | `dom.mouseMoveTo` | `{ handleId \| selector }` | `{ x, y }` |
 | `dom.focus` | `{ handleId \| selector }` | `{ focused: true }` |
 | `dom.type` | `{ text, handleId?, selector? }` | `{ typed: true }` |
-| `dom.keyPress` | `{ key }` | `{ pressed: true }` |
+| `dom.keyPress` | `{ key }` | `{ pressed: true }`; `{ pressed: true, submitted: true }` when Enter in a form field submitted the form (as a real key press would, unless the page cancelled the keydown) |
 | `dom.keyDown` | `{ key }` | `{ down: true }` |
 | `dom.keyUp` | `{ key }` | `{ up: true }` |
 | `dom.scroll` | `{ handleId? \| selector?, direction?, amount?, behavior? }` | `{ scrolled: true, before, after, target }` |
@@ -199,16 +214,18 @@ Returns:
 - success: `{ "clicked": true }`
 - blocked: `{ "clicked": false, "reason": "...", "detail": "..." }`
 
+A click that the page would intercept (`occluded`, `nothing-at-point`) is refused before success is reported, including when the press is deferred so the response can leave before a navigation.
+
 Built-in checks:
 1. avoid rules
 2. aria-hidden
-3. missing `offsetParent`
+3. missing `offsetParent` (`position: fixed` elements are exempt: they never have one)
 4. honeypot class patterns
 5. `opacity: 0`
 6. `visibility: hidden`
 7. sub-pixel size
 8. missing bounding box
-9. scroll into view
+9. scroll into view: the comfort band (`comfortTopRatio` ... `comfortRightRatio`) is where scrolling tries to place the element; the click goes ahead once at least `minVisibleRatio` of it is on screen, even when the page cannot bring it into the band (window edges, short pages). Elements inside a `position: fixed` layer are not scrolled for.
 10. optional drift-away behavior from `human.cursor`
 11. bezier path using `human.cursor`
 12. think delay from `human.click`
@@ -331,39 +348,43 @@ Two execution contexts exist:
 2. MAIN world: page globals, may be blocked by CSP
 
 Commands that keep working under CSP:
-- `dom.querySelector`
-- `dom.querySelectorAll`
+- `dom.querySelector`, `dom.querySelectorAll`, `dom.queryAllInfo`, `dom.discoverElements`
 - `dom.getHTML`
-- `human.click`
-- `human.type`
-- `human.scroll`
-- `dom.click`
+- `human.click`, `human.type`, `human.scroll`, `human.clearInput`, `dom.click`, `dom.keyPress`
+- `tabs.goBack`, `tabs.goForward` (they call the browser history from the extension, not page script)
 
-`dom.evaluate` and `dom.elementEvaluate` try MAIN first and fall back when possible.
+`dom.evaluate` tries, in order: an inline `<script>` added by the content script, `chrome.scripting` in the MAIN world (needs the page to allow `unsafe-eval`), then the ISOLATED world (which MV3 also forbids eval in). Some Chromium builds (seen on 155) block the inline route entirely; that is detected at once. When every route is blocked, the command fails with an error naming the CSP instead of returning `null`.
 
 ## Example Python Client
 
 ```python
 import asyncio, json, uuid, websockets
 
+from pathlib import Path
+
 async def main():
-    async with websockets.connect('ws://localhost:7331') as ws:
+    token = (Path.home() / "h17-webpilot" / "token").read_text().strip()
+    async with websockets.connect(f"ws://127.0.0.1:7331/?token={token}") as ws:
         async def send(action, params={}, tab_id=None):
             msg = {"id": str(uuid.uuid4()), "action": action, "params": params}
             if tab_id:
                 msg["tabId"] = tab_id
             await ws.send(json.dumps(msg))
-            resp = json.loads(await ws.recv())
+            while True:  # events share the socket; wait for our id
+                resp = json.loads(await ws.recv())
+                if resp.get("id") == msg["id"]:
+                    break
             if "error" in resp:
                 raise Exception(resp["error"])
-            return resp["result"]
+            return resp.get("result")
 
         tabs = await send("tabs.list")
         tab = tabs[0]["id"]
-        await send("tabs.navigate", {"url": "https://example.com"}, tab)
-        handle = await send("dom.querySelector", {"selector": "h1"}, tab)
+        loaded = await send("tabs.navigate", {"url": "https://example.com"}, tab)
+        if not loaded.get("success"):
+            raise Exception(f"page did not load: {loaded.get('error')}")
+        handle = await send("dom.querySelector", {"selector": "p"}, tab)
         print(await send("human.click", {"handleId": handle}, tab))
-        await send("human.type", {"text": "Hello", "selector": "#input"}, tab)
 
 asyncio.run(main())
 ```

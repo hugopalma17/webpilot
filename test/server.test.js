@@ -176,6 +176,7 @@ function testLauncherInfersXauthorityDisplay() {
     homeDir: "/home/tester",
     existsSync: (p) => p === "/home/tester/.Xauthority",
     listXauthority: () => ["tester-host/unix:0  MIT-MAGIC-COOKIE-1  abcdef"],
+    listDir: () => [],
   });
 
   assert.strictEqual(result.inferred, true);
@@ -192,12 +193,366 @@ function testLauncherLeavesMissingDisplayUnset() {
     platform: "linux",
     homeDir: "/home/tester",
     existsSync: () => false,
+    listDir: () => [],
   });
 
   assert.strictEqual(result.inferred, false);
   assert.deepStrictEqual(result.env, {});
-  assert(result.warning.includes("No DISPLAY"));
-  console.log("✓ Launcher warns when no DISPLAY can be inferred");
+  assert(result.warning.includes("No graphical session found"));
+  assert(result.warning.includes("a monitor is not required"));
+  assert(result.warning.includes("xvfb-run -a webpilot start -d"));
+  console.log("✓ Launcher warns when no graphical session can be found");
+}
+
+function testLauncherInfersWaylandSocket() {
+  const { resolveBrowserDisplayEnv } = require("../lib/launcher");
+  const result = resolveBrowserDisplayEnv({
+    env: { XDG_RUNTIME_DIR: "/run/user/1000" },
+    platform: "linux",
+    homeDir: "/home/tester",
+    existsSync: () => false,
+    listDir: () => ["wayland-1.lock", "wayland-1", "bus", "pipewire-0"],
+    isSocket: (p) => p === "/run/user/1000/wayland-1",
+  });
+
+  assert.strictEqual(result.inferred, true);
+  assert.strictEqual(result.warning, null);
+  assert.strictEqual(result.env.WAYLAND_DISPLAY, "wayland-1");
+  console.log("✓ Launcher finds the compositor's Wayland socket when WAYLAND_DISPLAY is unset");
+}
+
+function testLauncherAcceptsWaylandDisplay() {
+  const { resolveBrowserDisplayEnv } = require("../lib/launcher");
+  const result = resolveBrowserDisplayEnv({
+    env: { WAYLAND_DISPLAY: "wayland-1" },
+    platform: "linux",
+    homeDir: "/home/tester",
+    existsSync: () => false,
+  });
+
+  assert.strictEqual(result.inferred, false);
+  assert.strictEqual(result.warning, null);
+  assert.deepStrictEqual(result.env, { WAYLAND_DISPLAY: "wayland-1" });
+  console.log("✓ Launcher accepts a Wayland display without DISPLAY");
+}
+
+function testLauncherRefreshesCachedExtensionWorker() {
+  const { refreshExtensionWorkerCache } = require("../lib/launcher");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "webpilot-sw-"));
+  const ext = path.join(root, "extension");
+  const profile = path.join(root, "profile");
+  const cache = path.join(profile, "Default", "Service Worker");
+  fs.mkdirSync(ext, { recursive: true });
+  fs.writeFileSync(path.join(ext, "service-worker.js"), "// v1");
+  fs.writeFileSync(path.join(ext, "manifest.json"), "{}");
+  fs.mkdirSync(path.join(cache, "ScriptCache"), { recursive: true });
+
+  try {
+    assert.strictEqual(
+      refreshExtensionWorkerCache(profile, ext, { profileInUse: () => true }),
+      false,
+      "a profile still in use is left alone",
+    );
+    assert(fs.existsSync(cache), "cache kept while the profile is in use");
+    assert.strictEqual(refreshExtensionWorkerCache(profile, ext, { profileInUse: () => false }), true, "retried on the next launch");
+    fs.mkdirSync(path.join(cache, "ScriptCache"), { recursive: true });
+    fs.unlinkSync(path.join(profile, "webpilot-extension.sha256"));
+    assert.strictEqual(refreshExtensionWorkerCache(profile, ext, { profileInUse: () => false }), true, "first launch drops an unknown cache");
+    assert(!fs.existsSync(cache));
+    fs.mkdirSync(path.join(cache, "ScriptCache"), { recursive: true });
+    assert.strictEqual(refreshExtensionWorkerCache(profile, ext, { profileInUse: () => false }), false, "unchanged worker keeps the cache");
+    assert(fs.existsSync(cache));
+    fs.writeFileSync(path.join(ext, "service-worker.js"), "// v2");
+    assert.strictEqual(refreshExtensionWorkerCache(profile, ext, { profileInUse: () => false }), true, "changed worker drops the cache");
+    assert(!fs.existsSync(cache));
+    fs.writeFileSync(path.join(ext, "token.json"), "{\"token\":\"x\"}");
+    fs.mkdirSync(cache, { recursive: true });
+    assert.strictEqual(refreshExtensionWorkerCache(profile, ext, { profileInUse: () => false }), false, "per-run token.json does not count");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  console.log("✓ Launcher drops the cached extension service worker only when its files change");
+}
+
+function testCliParserReportsMissingArguments() {
+  const { resolveLine } = require("../lib/cli-parser");
+  const errors = [];
+  const options = { onError: (label, message) => errors.push(message) };
+
+  assert.strictEqual(resolveLine("click", options), null);
+  assert(errors.pop().includes("quote the whole command"), "click hint explains shell # comments");
+
+  assert.strictEqual(resolveLine("go", options), null);
+  const goError = errors.pop();
+  assert(goError.startsWith("go needs a URL"));
+  assert(!goError.includes("comment"), "go does not get the selector quoting hint");
+
+  assert.strictEqual(resolveLine("clik #submit", options), null);
+  assert(errors.pop().startsWith('Unknown command "clik"'));
+
+  assert.strictEqual(resolveLine("cookies nope", options), null);
+  assert(errors.pop().includes("load <file>"));
+
+  assert.strictEqual(resolveLine("dom.queryAllInfo {bad", options), null);
+  assert(errors.pop().includes("must be JSON"));
+
+  assert.deepStrictEqual(resolveLine("wait #results 15000", options), {
+    action: "dom.waitForSelector",
+    params: { selector: "#results", timeout: 15000 },
+  });
+  assert.deepStrictEqual(resolveLine("wait div .row", options), {
+    action: "dom.waitForSelector",
+    params: { selector: "div .row" },
+  });
+  assert.deepStrictEqual(resolveLine("clear el_4", options), {
+    action: "human.clearInput",
+    params: { handleId: "el_4" },
+  });
+  assert.strictEqual(errors.length, 0);
+  console.log("✓ CLI parser reports missing arguments and typos in plain English");
+}
+
+function testCliParserValidatesGoUrls() {
+  const { resolveGoUrl } = require("../lib/cli-parser");
+  assert.deepStrictEqual(resolveGoUrl("example.com"), { url: "https://example.com" });
+  assert.deepStrictEqual(resolveGoUrl("localhost:3456/x"), { url: "http://localhost:3456/x" });
+  assert.deepStrictEqual(resolveGoUrl("example.com:8080/a"), { url: "https://example.com:8080/a" });
+  assert.deepStrictEqual(resolveGoUrl("about:blank"), { url: "about:blank" });
+  assert(resolveGoUrl("htp://example.com").error.includes("Did you mean https://example.com?"));
+  assert(!resolveGoUrl("mailto:a@b.c").error.includes("Did you mean"));
+  assert(resolveGoUrl("javascript:alert(1)").error.includes("use eval"));
+  assert(resolveGoUrl("http://").error.includes("is not a valid URL"));
+  assert(resolveGoUrl("exa mple.com").error.includes("cannot contain spaces"));
+  console.log("✓ CLI parser validates go URLs before sending them");
+}
+
+function testCliOutputOutcomes() {
+  const out = require("../lib/cli-output");
+
+  assert.strictEqual(out.formatStatus(out.ok()), "OK");
+  assert.strictEqual(out.formatStatus(out.ok("clicked #a")), "OK: clicked #a");
+  assert.strictEqual(out.formatStatus(out.unconfirmed("x")), "OK (unconfirmed): x");
+  assert.strictEqual(out.formatStatus(out.fail("Nope.")), "ERROR: Nope.");
+
+  const clicked = out.outcomeFromResult("human.click", { selector: "#a" }, { clicked: true });
+  assert.deepStrictEqual(clicked, { ok: true, message: "clicked #a" });
+
+  const refused = out.outcomeFromResult("human.click", { selector: "#trap" }, { clicked: false, reason: "opacity-zero" });
+  assert.strictEqual(refused.ok, false);
+  assert(refused.message.includes("fully transparent"));
+
+  const occluded = out.outcomeFromResult("human.click", { handleId: "el_2" }, { clicked: false, reason: "occluded", detail: "div.modal" });
+  assert(occluded.message.includes("covering it (div.modal)"));
+
+  const waited = out.outcomeFromResult("dom.waitForSelector", { selector: "#x", timeout: 1500 }, null);
+  assert.strictEqual(waited.ok, false);
+  assert(waited.message.includes("within 1.5 seconds"));
+
+  const dns = out.outcomeFromResult("tabs.navigate", { url: "https://nope.invalid" }, { success: false, error: "net::ERR_NAME_NOT_RESOLVED" });
+  assert.strictEqual(dns.ok, false);
+  assert(dns.message.includes("domain name could not be found"));
+
+  const notFound = out.outcomeFromResult("tabs.navigate", { url: "https://x.test/missing" }, { success: true, status: 404 });
+  assert.strictEqual(notFound.ok, false);
+  assert(notFound.message.includes("HTTP 404 (Not Found)"));
+  const blocked = out.outcomeFromResult("tabs.navigate", { url: "https://x.test" }, { success: true, status: 403 });
+  assert(blocked.message.includes("often bot protection"));
+  assert.strictEqual(out.outcomeFromResult("tabs.navigate", { url: "https://x.test" }, { success: true, status: 200 }).ok, true);
+  const silent = out.outcomeFromResult("tabs.navigate", { url: "http://10.255.255.1/" }, { success: false, error: "net::ERR_TIMED_OUT", timeout: true });
+  assert(silent.message.includes("did not respond within 30 seconds"));
+  const aborted = out.outcomeFromResult("tabs.navigate", { url: "https://x.test/file.zip" }, { success: false, error: "net::ERR_ABORTED" });
+  assert(aborted.message.includes("did not open it as a page"));
+
+  const slow = out.outcomeFromResult("tabs.navigate", { url: "https://slow.test" }, { success: true, timeout: true });
+  assert.strictEqual(slow.ok, true);
+  assert(slow.message.includes("still loading"));
+
+  const edge = out.outcomeFromResult("human.scroll", { direction: "down" }, { scrolled: false, amount: 0 });
+  assert.strictEqual(edge.ok, true);
+  assert(edge.message.includes("already at the bottom"));
+
+  const gone = out.outcomeFromResult("dom.keyPress", { key: "Enter" }, { navigatedAway: true, confirmed: false });
+  assert.strictEqual(gone.ok, true);
+  assert.strictEqual(gone.unconfirmed, true);
+
+  const submitted = out.outcomeFromResult("dom.keyPress", { key: "Enter" }, { pressed: true, submitted: true });
+  assert(submitted.message.startsWith("pressed Enter and submitted the form"));
+  assert.strictEqual(out.outcomeFromResult("dom.keyPress", { key: "Enter" }, { pressed: true }).message, "pressed Enter");
+
+  const setValue = out.outcomeFromResult("dom.setValue", { selector: "#q", value: "x" }, { set: true });
+  assert(setValue.warning.includes("no keystrokes"));
+  const domType = out.outcomeFromResult("dom.type", { selector: "#q", text: "x" }, { typed: true });
+  assert(domType.warning.includes("typed instantly"));
+  const humanType = out.outcomeFromResult("human.type", { selector: "#q", text: "x" }, { typed: true });
+  assert.strictEqual(humanType.warning, undefined);
+
+  const back = out.outcomeFromError(new Error("The page navigated away while dom.evaluateViaScript was running, so its result was lost."), { action: "dom.evaluate", command: "back" });
+  assert.strictEqual(back.ok, true);
+  assert(back.message.startsWith("went back"));
+
+  assert(out.plainError("Element not found: #missing").includes("No element on the current page matches #missing"));
+  assert(out.plainError("Extension not connected\n\n  The browser may have closed.").includes("webpilot start"));
+  assert(!out.plainError("Extension not connected\n\n  hint").includes("hint"));
+  assert(out.plainError("Command dom.click timed out (30s)").includes("within 30 seconds"));
+  assert(out.plainError("Could not establish connection. Receiving end does not exist.").includes("could not reach this page"));
+  assert(out.plainError("connect ECONNREFUSED 127.0.0.1:7331", { addr: "ws://localhost:7331" }).includes("Nothing is listening at ws://localhost:7331"));
+  assert.strictEqual(out.plainError("something odd happened"), "Something odd happened.");
+  assert.strictEqual(out.plainError("The script threw an error: x is not defined"), "The script threw an error: x is not defined.");
+  const both = out.plainError("Evaluate failed in both MAIN and ISOLATED worlds. MAIN error: Evaluate failed: page CSP blocks both inline scripts and eval. ISOLATED error: Refused to evaluate a string");
+  assert(both.includes("isolated world failed too (Refused to evaluate a string)"), both);
+  console.log("✓ CLI output maps results and errors to OK/ERROR in plain English");
+}
+
+// Spawns the real CLI against a fake extension. HOME is a temp dir, so the
+// user's ~/h17-webpilot (token, pid, config) is never read or written.
+async function testCliStatusLinesEndToEnd() {
+  const { spawn } = require("child_process");
+  const crypto = require("crypto");
+  const CLI_PATH = path.join(__dirname, "..", "bin", "cli.js");
+  const port = nextPort();
+  const server = createServer({ port, insecureNoAuth: true });
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "webpilot-cli-"));
+  const wpHome = path.join(home, "h17-webpilot");
+  fs.mkdirSync(wpHome, { recursive: true });
+
+  // Stand-in daemon pid: start's restart path would signal it, never this process.
+  const fakeDaemon = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  fs.writeFileSync(path.join(wpHome, `server-${port}.pid`), String(fakeDaemon.pid));
+
+  const replies = {
+    "tabs.list": () => ({ result: [{ id: 1, url: "http://fixture/", title: "Fixture", active: true }] }),
+    "human.click": (p) => p.selector === "#ok"
+      ? { result: { clicked: true } }
+      : { result: { clicked: false, reason: "opacity-zero" } },
+    "dom.waitForSelector": (p) => (p.selector === "#never-answers" ? null : { result: null }),
+    "tabs.navigate": () => ({ result: { success: false, error: "net::ERR_NAME_NOT_RESOLVED" } }),
+    "dom.keyPress": () => ({ result: { navigatedAway: true, confirmed: false } }),
+    "dom.setValue": () => ({ result: { set: true } }),
+    "tabs.getCurrent": () => ({ result: { id: 1, title: "Fixture Title", url: "http://fixture/" } }),
+    "dom.getHTML": () => ({ error: "Could not establish connection. Receiving end does not exist." }),
+  };
+
+  await wait(200);
+  const ext = await openWebSocket(`ws://127.0.0.1:${port}`);
+  ext.on("message", (data) => {
+    const msg = JSON.parse(data.toString());
+    if (msg.type === "ping" || !msg.id) return;
+    const reply = replies[msg.action] ? replies[msg.action](msg.params || {}) : { result: { ok: true } };
+    if (reply) ext.send(JSON.stringify({ id: msg.id, ...reply }));
+  });
+  ext.send(JSON.stringify({ type: "handshake", extensionId: "fake", version: "test" }));
+  await server.waitForConnection();
+
+  function runCli(args, input) {
+    return new Promise((resolve) => {
+      const started = Date.now();
+      const child = spawn(process.execPath, [CLI_PATH, "--port", String(port), ...args], {
+        env: { ...process.env, HOME: home, FORCE_COLOR: "0" },
+      });
+      let stdout = "";
+      child.stdout.on("data", (d) => (stdout += d));
+      child.stderr.on("data", (d) => (stdout += d));
+      const killer = setTimeout(() => child.kill("SIGKILL"), 15000);
+      child.on("close", (code) => {
+        clearTimeout(killer);
+        const lines = stdout.trim().split("\n");
+        resolve({ code, stdout, last: lines[lines.length - 1], ms: Date.now() - started });
+      });
+      child.stdin.end(input || "");
+    });
+  }
+
+  try {
+    let r = await runCli(["-c", "click #ok"]);
+    assert.strictEqual(r.last, "OK: clicked #ok", r.stdout);
+    assert.strictEqual(r.code, 0);
+
+    r = await runCli(["-c", "click #trap"]);
+    assert(r.last.startsWith("ERROR: Did not click #trap: it is fully transparent"), r.stdout);
+    assert.strictEqual(r.code, 1);
+
+    r = await runCli(["-c", "click"]);
+    assert(r.last.startsWith("ERROR: click needs a target"), r.stdout);
+    assert.strictEqual(r.code, 1);
+    assert(r.ms < 5000, `missing argument must fail fast, took ${r.ms}ms`);
+
+    r = await runCli(["-c", "wait #missing 200"]);
+    assert(r.last.startsWith("ERROR: #missing did not appear within 0.2 seconds"), r.stdout);
+    assert.strictEqual(r.code, 1);
+
+    r = await runCli(["-c", 'dom.waitForSelector {"selector": "#never-answers", "timeout": 100}']);
+    assert(r.last.startsWith("ERROR: The browser did not answer"), r.stdout);
+    assert.strictEqual(r.code, 1);
+    assert(r.ms < 10000, `silent extension must time out, took ${r.ms}ms`);
+
+    r = await runCli(["-c", "go nowhere.invalid"]);
+    assert(r.last.includes("Could not load https://nowhere.invalid: the domain name could not be found"), r.stdout);
+    assert.strictEqual(r.code, 1);
+
+    r = await runCli(["-c", "key Enter"]);
+    assert(r.last.startsWith("OK (unconfirmed): the page navigated away"), r.stdout);
+    assert.strictEqual(r.code, 0);
+
+    r = await runCli(["-c", 'dom.setValue {"selector": "#q", "value": "x"}']);
+    assert(r.stdout.includes("[WARN] dom.setValue wrote the value"), r.stdout);
+    assert.strictEqual(r.last, "OK: set the value of #q", r.stdout);
+
+    r = await runCli(["-c", "html"]);
+    assert(r.last.startsWith("ERROR: Webpilot could not reach this page"), r.stdout);
+
+    r = await runCli(["-c", "back"]);
+    assert.strictEqual(r.last, "OK: went back in history", r.stdout);
+
+    r = await runCli(["title"]);
+    assert(r.stdout.includes("Fixture Title"), r.stdout);
+    assert.strictEqual(r.last, "OK", r.stdout);
+    assert.strictEqual(r.code, 0);
+
+    r = await runCli(["-c", ".bogus"]);
+    assert(r.last.startsWith('ERROR: Unknown command ".bogus"'), r.stdout);
+
+    r = await runCli([], "click #ok\nclick #trap\n");
+    assert(r.stdout.includes("OK: clicked #ok"), r.stdout);
+    assert(r.last.startsWith("ERROR: Did not click #trap"), r.stdout);
+    assert.strictEqual(r.code, 1, "pipe mode exits 1 when any command failed");
+
+    r = await runCli([]);
+    assert(r.last.startsWith("ERROR: No command given"), r.stdout);
+
+    r = await runCli(["title", "--config", "other.js"]);
+    assert(r.last.startsWith("ERROR: Put options before the command"), r.stdout);
+    assert.strictEqual(r.code, 1);
+
+    r = await runCli(["-c", ".quit"]);
+    assert.strictEqual(r.last, "OK: nothing to quit: a single command exits on its own", r.stdout);
+    assert.strictEqual(r.code, 0);
+
+    r = await runCli([], "click #ok\n.quit\nclick #trap\n");
+    assert(r.last.startsWith("OK: stopped here"), r.stdout);
+    assert(!r.stdout.includes("#trap"), "lines after .quit are not run");
+    assert.strictEqual(r.code, 0);
+
+    // start reuses a ready runtime whose recorded config matches.
+    const configPath = path.join(wpHome, "config.js");
+    fs.writeFileSync(configPath, `module.exports = { browser: "/nonexistent", profile: ${JSON.stringify(path.join(home, "profile"))}, port: ${port} };\n`);
+    fs.writeFileSync(path.join(wpHome, `server-${port}.json`), JSON.stringify({
+      pid: fakeDaemon.pid,
+      configPath,
+      configHash: crypto.createHash("sha256").update(fs.readFileSync(configPath)).digest("hex"),
+      browser: null,
+      sessionLog: true,
+    }));
+    r = await runCli(["start", "-d"]);
+    assert(r.stdout.includes("nothing was restarted"), r.stdout);
+    assert(r.last.startsWith("OK: webpilot is already running and ready"), r.stdout);
+    assert.strictEqual(r.code, 0);
+  } finally {
+    ext.close();
+    server.close();
+    try { fakeDaemon.kill(); } catch {}
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+  console.log("✓ CLI prints one OK/ERROR status line with matching exit codes");
 }
 
 function testCliParserPreservesHandleForHumanType() {
@@ -787,8 +1142,15 @@ async function runAllTests() {
     testLauncherPreservesExistingDisplay,
     testLauncherInfersXauthorityDisplay,
     testLauncherLeavesMissingDisplayUnset,
+    testLauncherAcceptsWaylandDisplay,
+    testLauncherInfersWaylandSocket,
+    testLauncherRefreshesCachedExtensionWorker,
     testCliParserPreservesHandleForHumanType,
     testCliParserConsumesCommandArgv,
+    testCliParserReportsMissingArguments,
+    testCliParserValidatesGoUrls,
+    testCliOutputOutcomes,
+    testCliStatusLinesEndToEnd,
     testCreateServerBasic,
     testServerRejectsMissingToken,
     testServerRejectsWrongToken,

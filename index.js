@@ -9,7 +9,9 @@ const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 const { createServer, log, setLogLevel, initDebugLog, debugLog } = require('./lib/server');
-const { launchBrowser, clearBrowserState } = require('./lib/launcher');
+const { launchBrowser, clearBrowserState, browserLogSummary } = require('./lib/launcher');
+const { outcomeFromResult } = require('./lib/cli-output');
+const { resolveGoUrl } = require('./lib/cli-parser');
 const { authedWsUrl } = require('./lib/auth');
 const { BridgePage } = require('./client/page');
 const client = require('./client');
@@ -193,13 +195,12 @@ function resolveBootCommand(line) {
     case 'navigate':
     case 'goto': {
       if (!rest) return null;
-      let url = rest;
-      if (!url.includes('://')) {
-        url = (url.startsWith('localhost') || url.startsWith('127.0.0.1'))
-          ? 'http://' + url
-          : 'https://' + url;
+      const target = resolveGoUrl(rest);
+      if (target.error) {
+        log('WARN', `Boot command "${trimmed}" skipped: ${target.error}`);
+        return null;
       }
-      return { action: 'tabs.navigate', params: { url } };
+      return { action: 'tabs.navigate', params: { url: target.url } };
     }
     case 'click':
       if (!rest) return null;
@@ -261,9 +262,9 @@ function resolveBootCommand(line) {
     case 'reload':
       return { action: 'tabs.reload', params: {} };
     case 'back':
-      return { action: 'dom.evaluate', params: { fn: '() => { history.back(); return true; }' } };
+      return { action: 'tabs.goBack', params: {} };
     case 'forward':
-      return { action: 'dom.evaluate', params: { fn: '() => { history.forward(); return true; }' } };
+      return { action: 'tabs.goForward', params: {} };
     case 'clear':
       if (!rest) return null;
       return { action: 'human.clearInput', params: { selector: rest } };
@@ -334,7 +335,8 @@ async function runBootSequence(transport, config) {
         continue;
       }
       if (!entry.action) throw new Error('Boot command object requires action');
-      await transport.send(entry.action, entry.params || {}, entry.tabId ?? null);
+      const objectResult = await transport.send(entry.action, entry.params || {}, entry.tabId ?? null);
+      warnIfBootStepFailed(entry.action, entry.action, entry.params || {}, objectResult);
       continue;
     }
 
@@ -354,9 +356,19 @@ async function runBootSequence(transport, config) {
     }
 
     const resolved = resolveBootCommand(trimmed);
-    if (!resolved) continue;
-    await transport.send(resolved.action, resolved.params || {}, resolved.tabId ?? null);
+    if (!resolved) {
+      log('WARN', `Boot command "${trimmed}" was not understood and was skipped`);
+      continue;
+    }
+    const result = await transport.send(resolved.action, resolved.params || {}, resolved.tabId ?? null);
+    warnIfBootStepFailed(trimmed, resolved.action, resolved.params || {}, result);
   }
+}
+
+// Boot steps resolve even when nothing happened (page failed to load, click refused).
+function warnIfBootStepFailed(label, action, params, result) {
+  const outcome = outcomeFromResult(action, params, result);
+  if (!outcome.ok) log('WARN', `Boot command "${label}" did not succeed: ${outcome.message}`);
 }
 
 
@@ -425,7 +437,38 @@ async function start(overrides = {}) {
     log('INFO', `DevTools CDP port enabled: chrome://inspect or http://localhost:9222`);
   }
 
-  const transport = await server.waitForConnection();
+  // Fail fast when the browser dies before its extension connects. Exit code 0 is
+  // left alone: Chromium exits 0 after handing off to an instance already running.
+  const connection = server.waitForConnection();
+  connection.catch(() => {});
+  let connected = false;
+  const earlyExit = new Promise((resolve) => {
+    browserProcess.once('error', (err) => {
+      if (connected) return;
+      const why = err.code === 'ENOENT' ? 'no such file'
+        : err.code === 'EACCES' ? 'the file is not executable'
+          : err.message;
+      resolve(`Could not start the browser at ${config.browser}: ${why}. Fix "browser" in the webpilot config`);
+    });
+    browserProcess.once('exit', (code, signal) => {
+      if (connected || (code === 0 && !signal)) return;
+      const detail = browserLogSummary(browserProcess.logPath).replace(/\.+$/, '');
+      resolve(
+        `The browser exited right after launch (${signal ? `signal ${signal}` : `exit code ${code}`})` +
+        `${detail ? `: ${detail}` : ''}. Full output: ${browserProcess.logPath}`,
+      );
+    });
+  });
+  const first = await Promise.race([
+    connection.then((transport) => ({ transport })),
+    earlyExit.then((failure) => ({ failure })),
+  ]);
+  if (first.failure) {
+    server.close();
+    throw new Error(first.failure);
+  }
+  connected = true;
+  const transport = first.transport;
   log('INFO', 'Extension connected — ready for commands');
 
   // Version check: compare running extension vs local manifest
